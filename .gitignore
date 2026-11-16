@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+research/data/
+.plugins/
+var/
+web/node_modules/
+web/dist/
+.pnpm-store/
+apk/build/
+apk/*.idsig
+apk/*.jks
+.DS_Store
+apk/.idea/

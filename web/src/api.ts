@@ -1,0 +1,547 @@
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
+export type RunKind = 'replay' | 'walkforward' | 'sweep'
+
+export interface Run {
+  id: string
+  kind: RunKind
+  symbol: string
+  status: RunStatus
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  params: Record<string, unknown>
+  summary: Record<string, number | boolean | null> | null
+  error: string | null
+  progress: number
+  message: string | null
+  cancel_requested: boolean
+}
+
+export interface MarketSnapshot {
+  symbol?: string
+  source: 'binance' | 'dataset'
+  mark_price: number | null
+  index_price?: number | null
+  last_price?: number | null
+  change_24h_pct: number | null
+  high_24h?: number | null
+  low_24h?: number | null
+  volume_24h?: number | null
+  quote_volume_24h?: number | null
+  last_funding_rate: number | null
+  next_funding_time?: string | null
+  as_of?: string | null
+  bar_age_minutes?: number | null
+  fetched_at?: string
+}
+
+export interface DatasetContract {
+  tick_size: number
+  step_size: number
+  min_notional: number
+  max_orders: number
+}
+
+export interface TradingSession {
+  market: string
+  start: string
+  end: string
+  type: string
+}
+
+export interface DatasetQuality {
+  symbol: string
+  bars: number
+  start: string
+  end: string
+  expected_bars: number
+  missing_bars: number
+  duplicate_timestamps: number
+  out_of_order: boolean
+  max_gap_minutes: number
+  median_gap_minutes: number | null
+  gap_count: number
+  coverage_pct: number | null
+  zero_volume_pct: number
+  bad_ohlc: number
+  price_min: number
+  price_max: number
+  last_close: number
+  bytes: number
+  funding_settlements: number
+  funding_median_interval_hours: number | null
+  funding_max_interval_hours: number | null
+  last_funding: string | null
+  filters: DatasetContract
+  contract: {
+    contract_type: string | null
+    underlying_type: string | null
+    onboard: string | null
+    funding_interval_hours: number | null
+  }
+  schedule: {
+    sessions: number
+    no_trading_recent: TradingSession[]
+    markets: string[]
+  }
+}
+
+export interface CandleResponse {
+  symbol: string
+  interval: string
+  count: number
+  from: number | null
+  to: number | null
+  candles: [number, number, number, number, number, number][]
+}
+
+export interface FundingPoint {
+  time: number
+  rate: number
+  mark_price: number | null
+}
+
+export interface FundingResponse {
+  symbol: string
+  points: FundingPoint[]
+  summary: {
+    count: number
+    mean_rate: number
+    median_rate: number
+    positive_pct: number
+    annualized_pct: number
+    interval_hours: number
+    last: string | null
+  }
+}
+
+export interface EquityPoint {
+  t: number
+  v: number
+}
+
+export interface Fill {
+  ts: string
+  side: string
+  qty: number
+  price: number
+  fee: number
+  tag: string
+  liquidity: 'MAKER' | 'TAKER'
+  client_id: string
+}
+
+export interface OpenOrder {
+  client_id: string
+  side: string
+  type: string
+  qty: number
+  price: number | null
+  filled_qty: number
+  tag: string
+  status: string
+}
+
+export interface MonthRow {
+  month: string
+  ret: number
+  dd: number
+  trades: number
+  fees: number
+  funding: number | null
+  halted: boolean
+}
+
+export interface ReplaySummary {
+  total_return: number
+  ann_return: number
+  max_dd: number
+  sharpe: number
+  final_equity: number
+  trades: number
+  fees: number
+  funding: number
+  funding_pct_of_capital?: number
+  turnover_x?: number
+  avg_inventory_pct?: number
+  halted: boolean
+  final_position?: number
+  bars?: number
+  start?: string
+  end?: string
+  strategy_state?: Record<string, number | string>
+  [key: string]: number | boolean | string | null | Record<string, number | string> | undefined
+}
+
+export interface RunMeta {
+  symbol: string
+  params: Record<string, unknown>
+  generated_at: string
+  duration_s: number
+  bars: number
+  start: string
+  end: string
+  min_days?: number
+  axes?: { spacings: number[]; levels: number[]; leverages: number[] }
+}
+
+export interface ReplayArtifact {
+  kind: 'replay'
+  meta: RunMeta
+  summary: ReplaySummary
+  capital: number
+  equity: { points: EquityPoint[]; sampled_from: number; first: number; last: number }
+  drawdown: { points: EquityPoint[] }
+  fills: Fill[]
+  fills_truncated: boolean
+  months: MonthRow[]
+  orders: {
+    counts: Record<string, number>
+    rejection_reasons: Array<{ reason: string; count: number }>
+    open: OpenOrder[]
+  }
+}
+
+export interface WalkforwardRow {
+  month: string
+  ret: number
+  ann_return: number
+  max_dd: number
+  sharpe: number
+  trades: number
+  fees: number
+  funding: number
+  halted: boolean
+}
+
+export interface WalkforwardArtifact {
+  kind: 'walkforward'
+  meta: RunMeta
+  rows: WalkforwardRow[]
+  cumulative: EquityPoint[]
+  summary: {
+    months: number
+    mean_ret: number
+    median_ret: number
+    worst_ret: number
+    best_ret: number
+    positive_months: number
+    stops: number
+    total_return: number
+    [key: string]: number | string | null
+  }
+}
+
+export interface SweepRow {
+  spacing_bp: number
+  levels: number
+  leverage: number
+  total_return: number
+  ann_return: number
+  max_dd: number
+  sharpe: number
+  trades: number
+  fees: number
+  funding: number
+  halted: boolean
+}
+
+export interface SweepArtifact {
+  kind: 'sweep'
+  meta: RunMeta
+  summary: {
+    combos: number
+    best: SweepRow | null
+    worst: SweepRow | null
+    positive: number
+  }
+  rows: SweepRow[]
+}
+
+export type Artifact = ReplayArtifact | WalkforwardArtifact | SweepArtifact
+
+export interface RiskLimits {
+  max_position_qty: number
+  max_order_notional: number
+  max_gross_notional: number
+  max_open_orders: number
+  max_submits_per_minute: number
+  max_price_deviation_bp: number
+}
+
+export interface RiskProfile {
+  symbol: string
+  capital: number
+  grid: { spacing_bp: number; levels: number; leverage: number }
+  stop_dd: number
+  kill_switch: boolean
+  rejections: Array<{ reason: string; count: number }>
+  latest_run: Run | null
+  limits: RiskLimits
+  exposure?: Record<string, number>
+}
+
+export interface ModeInfo {
+  enabled: boolean
+  locked?: boolean
+  label: string
+  detail: string
+}
+
+export interface Session {
+  ok: boolean
+  version: string
+  symbol: string
+  symbols: string[]
+  modes: Record<string, ModeInfo>
+  kill_switch: boolean
+}
+
+export interface SettingsView {
+  version: string
+  auth: { mode: string; token_hint: string; cookie: string }
+  paths: { data: string; var: string; web: string; web_built: boolean }
+  server: { host: string; port: number; cors_origins: string[]; uptime_s: number }
+  symbol: string
+  symbols: string[]
+  intervals: string[]
+  modes: Record<string, ModeInfo>
+  kill_switch: boolean
+}
+
+export interface AuditEntry {
+  id: number
+  ts: string
+  actor: string
+  action: string
+  detail: string | null
+}
+
+export interface Overview {
+  symbol: string
+  market: MarketSnapshot
+  dataset: DatasetQuality
+  runs: Run[]
+  walkforward: {
+    run: Run
+    rows: WalkforwardRow[]
+    cumulative: EquityPoint[]
+    summary: WalkforwardArtifact['summary']
+  } | null
+  replay: { run: Run; summary: ReplaySummary | null } | null
+  kill_switch: boolean
+  modes: Record<string, ModeInfo>
+}
+
+export interface ResearchInput {
+  symbol?: string
+  start?: string | null
+  end?: string | null
+  capital: number
+  spacing_bp: number
+  levels: number
+  leverage: number
+  reanchor_bars: number | null
+  stop_dd: number | null
+  maker_fee: number
+  taker_fee: number
+  slip_bp: number
+  intrabar: boolean
+}
+
+const TOKEN_KEY = 'gridtrade.token'
+const SERVER_KEY = 'gridtrade.server'
+
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+    this.name = 'ApiError'
+  }
+}
+
+export function getServer(): string {
+  const stored = localStorage.getItem(SERVER_KEY)
+  if (stored) return stored.replace(/\/$/, '')
+  return ''
+}
+
+export function setServer(value: string): void {
+  const trimmed = value.trim().replace(/\/+$/, '')
+  if (trimmed) localStorage.setItem(SERVER_KEY, trimmed)
+  else localStorage.removeItem(SERVER_KEY)
+}
+
+export function getToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? ''
+}
+
+export function setToken(value: string): void {
+  if (value) localStorage.setItem(TOKEN_KEY, value)
+  else localStorage.removeItem(TOKEN_KEY)
+}
+
+function url(path: string): string {
+  return `${getServer()}${path}`
+}
+
+type RawPoint = [number, number]
+
+function asPoints(raw: RawPoint[] | undefined): EquityPoint[] {
+  return (raw ?? []).map(([t, v]) => ({ t, v }))
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers)
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  let response: Response
+  try {
+    response = await fetch(url(path), { ...init, headers, credentials: 'include' })
+  } catch {
+    throw new ApiError(0, '无法连接服务端，请检查地址与网络。')
+  }
+  if (response.status === 401) {
+    throw new ApiError(401, '访问令牌被拒绝，请在设置中更新。')
+  }
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`
+    try {
+      const body = await response.json()
+      if (typeof body?.detail === 'string') detail = body.detail
+      else if (Array.isArray(body?.detail)) detail = body.detail.map((d: { msg?: string }) => d.msg).join('; ')
+    } catch {
+      /* keep the status text */
+    }
+    throw new ApiError(response.status, detail)
+  }
+  if (response.status === 204) return undefined as T
+  return (await response.json()) as T
+}
+
+function json(body: unknown): RequestInit {
+  return { method: 'POST', body: JSON.stringify(body) }
+}
+
+export const api = {
+  health: () => request<{ status: string; version: string; uptime_s: number }>('/api/health'),
+
+  login: (token: string) =>
+    request<{ ok: boolean; token_hint: string; expires_in: number }>(
+      '/api/auth/login',
+      json({ token }),
+    ),
+
+  logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+
+  session: () => request<Session>('/api/session'),
+
+  overview: async (symbol?: string) => {
+    const raw = await request<Overview & { walkforward: { cumulative: unknown } | null }>(
+      `/api/overview${symbol ? `?symbol=${symbol}` : ''}`,
+    )
+    if (raw.walkforward) {
+      raw.walkforward.cumulative = asPoints(raw.walkforward.cumulative as unknown as RawPoint[])
+    }
+    return raw as Overview
+  },
+
+  symbols: () =>
+    request<{ symbols: string[]; default: string }>('/api/dataset/symbols'),
+
+  quality: (symbol?: string) =>
+    request<DatasetQuality>(`/api/dataset/quality${symbol ? `?symbol=${symbol}` : ''}`),
+
+  snapshot: (symbol?: string) =>
+    request<MarketSnapshot>(`/api/market/snapshot${symbol ? `?symbol=${symbol}` : ''}`),
+
+  candles: (params: { symbol?: string; interval: string; limit?: number }) => {
+    const search = new URLSearchParams({ interval: params.interval })
+    if (params.symbol) search.set('symbol', params.symbol)
+    if (params.limit) search.set('limit', String(params.limit))
+    return request<CandleResponse>(`/api/market/candles?${search}`)
+  },
+
+  funding: async (params: { symbol?: string; limit?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.symbol) search.set('symbol', params.symbol)
+    if (params.limit) search.set('limit', String(params.limit))
+    const qs = search.toString()
+    const raw = await request<{
+      symbol: string
+      summary: FundingResponse['summary']
+      funding: Array<[number, number, number | null]>
+    }>(`/api/market/funding${qs ? `?${qs}` : ''}`)
+    return {
+      symbol: raw.symbol,
+      summary: raw.summary,
+      points: raw.funding.map(([time, rate, mark]) => ({
+        time,
+        rate,
+        mark_price: mark,
+      })),
+    } satisfies FundingResponse
+  },
+
+  submitReplay: (body: ResearchInput) => request<{ run: Run }>('/api/runs/replay', json(body)),
+  submitWalkforward: (body: ResearchInput & { min_days: number }) =>
+    request<{ run: Run }>('/api/runs/walkforward', json(body)),
+  submitSweep: (
+    body: ResearchInput & {
+      axes: { spacings: number[]; levels: number[]; leverages: number[] }
+    },
+  ) => request<{ run: Run }>('/api/runs/sweep', json(body)),
+
+  runs: (kind?: RunKind, limit = 30) => {
+    const search = new URLSearchParams()
+    if (kind) search.set('kind', kind)
+    search.set('limit', String(limit))
+    return request<{ runs: Run[] }>(`/api/runs?${search}`)
+  },
+
+  run: (id: string) => request<{ run: Run }>(`/api/runs/${id}`),
+
+  artifact: async (id: string) => {
+    const raw = await request<Record<string, unknown>>(`/api/runs/${id}/artifact`)
+    const record = raw as {
+      equity?: { points?: unknown }
+      drawdown?: { points?: unknown }
+      cumulative?: unknown
+    }
+    if (record.equity?.points) record.equity.points = asPoints(record.equity.points as RawPoint[])
+    if (record.drawdown?.points) record.drawdown.points = asPoints(record.drawdown.points as RawPoint[])
+    if (Array.isArray(record.cumulative)) record.cumulative = asPoints(record.cumulative as RawPoint[])
+    return raw as unknown as Artifact
+  },
+
+  cancelRun: (id: string) => request<{ canceled: boolean; run: Run }>(`/api/runs/${id}/cancel`, { method: 'POST' }),
+
+  risk: (params: { symbol?: string; capital?: number; spacing_bp?: number; levels?: number; leverage?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.symbol) search.set('symbol', params.symbol)
+    if (params.capital) search.set('capital', String(params.capital))
+    if (params.spacing_bp) search.set('spacing_bp', String(params.spacing_bp))
+    if (params.levels) search.set('levels', String(params.levels))
+    if (params.leverage) search.set('leverage', String(params.leverage))
+    const qs = search.toString()
+    return request<RiskProfile>(`/api/risk${qs ? `?${qs}` : ''}`)
+  },
+
+  setKillSwitch: (engaged: boolean) =>
+    request<{ kill_switch: boolean }>('/api/settings/kill-switch', json({ engaged })),
+
+  settings: () => request<SettingsView>('/api/settings'),
+
+  audit: (limit = 60) => request<{ entries: AuditEntry[] }>(`/api/audit?limit=${limit}`),
+}
+
+export function streamUrl(symbol?: string): string {
+  const base = getServer()
+  const proto = base.startsWith('https://') ? 'wss://' : base.startsWith('http://') ? 'ws://' : location.protocol === 'https:' ? 'wss://' : 'ws://'
+  const host = base ? new URL(base).host : location.host
+  const search = new URLSearchParams({ token: getToken() })
+  if (symbol) search.set('symbol', symbol)
+  return `${proto}${host}/ws?${search}`
+}
