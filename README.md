@@ -153,7 +153,11 @@ APK 不使用 Gradle 构建：`aapt2 -> javac (release 17) -> d8 -> zip -> zipal
 adb install -r apk/gridtrade.apk
 ```
 
-首次启动时 Activity 会要求填写服务器地址与令牌（长按或溢出菜单可重新打开），
+部分 OPPO/OnePlus 机型会在 `adb install` 时卡在安装引导，可改用
+`pm install-create` / `pm install-write` / `pm install-commit` 分段安装。
+
+首次启动时 Activity 会要求填写服务器地址与令牌；进入面板后，在页面历史尽头按返回键
+可重新打开“服务器与令牌”菜单。
 默认 `http://10.0.2.2:8000`（模拟器访问宿主机的别名），两者都存入 `SharedPreferences`。
 令牌还会同步写入 WebView 的 `localStorage`，避免 SPA 再次询问。
 
@@ -171,6 +175,21 @@ adb install -r apk/gridtrade.apk
 | --- | --- |
 | ![更多抽屉](docs/screens/02-more.png) | ![回测](docs/screens/04-backtest.png) |
 | ![月度归因](docs/screens/04e-monthly.png) | ![风控](docs/screens/07-risk.png) |
+
+## 开发交接与记忆文档
+
+换一台电脑继续开发时，先读 [docs/memory/README.md](docs/memory/README.md)。其中包含：
+
+- [项目总览与架构](docs/memory/01-项目总览与架构.md)
+- [开发进度与变更记录](docs/memory/02-开发进度与变更记录.md)
+- [部署与运维手册](docs/memory/03-部署与运维手册.md)
+- [测试手册](docs/memory/04-测试手册.md)（桌面 Web 与真机 APK 的可复现步骤）
+- [问题与决策记录](docs/memory/05-问题与决策记录.md)
+- [下一步与待办](docs/memory/06-下一步与待办.md)
+- [记忆库原始笔记](docs/memory/vault/)
+
+仓库不包含令牌（`var/token`）、行情数据（`research/data/`）、签名密钥（`apk/*.jks`）
+与前端构建产物（`web/dist/`），恢复步骤见交接文档。
 
 ## 测试
 
