@@ -22,6 +22,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from ..strategy.costs import CostModel
 from .config import PaperConfig
 
 _EPS = 1e-9
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS paper_account (
     realized REAL NOT NULL DEFAULT 0,
     fees REAL NOT NULL DEFAULT 0,
     funding REAL NOT NULL DEFAULT 0,
+    slippage REAL NOT NULL DEFAULT 0,
     peak_equity REAL NOT NULL,
     started_at TEXT,
     updated_at TEXT,
@@ -60,6 +62,7 @@ CREATE TABLE IF NOT EXISTS paper_symbols (
     avg_entry REAL NOT NULL DEFAULT 0,
     maker_fee REAL,
     taker_fee REAL,
+    slippage REAL NOT NULL DEFAULT 0,
     funding_next INTEGER,
     funding_interval INTEGER NOT NULL DEFAULT 28800
 );
@@ -73,6 +76,7 @@ CREATE TABLE IF NOT EXISTS paper_fills (
     qty REAL NOT NULL,
     fee REAL NOT NULL,
     realized REAL NOT NULL,
+    slip REAL NOT NULL DEFAULT 0,
     reason TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS paper_fills_ts ON paper_fills(id DESC);
@@ -194,6 +198,7 @@ class SymbolState:
     avg_entry: float = 0.0
     maker_fee: float | None = None
     taker_fee: float | None = None
+    slippage: float = 0.0
     funding_next: int | None = None
     funding_interval: int = 28_800
 
@@ -219,6 +224,7 @@ class PortfolioAccount:
     realized: float = 0.0
     fees: float = 0.0
     funding: float = 0.0
+    slippage: float = 0.0
     peak_equity: float = 0.0
 
 
@@ -412,7 +418,7 @@ class PaperEngine:
                 side, price, qty = "SELL", sell, state.unit
             else:
                 return
-            if not self._has_margin(state, price, qty):
+            if not self._has_margin(state, self._slipped_price(side, price), qty):
                 return
             self._fill(state, side, price, qty, self._maker_rate(state), "grid", now)
 
@@ -432,6 +438,17 @@ class PaperEngine:
             return state.taker_fee
         return self.config.taker_fee_bp / 1e4
 
+    @property
+    def _slippage_rate(self) -> float:
+        return max(0.0, self.config.slippage_bp) / 1e4
+
+    def _slipped_price(self, side: str, price: float) -> float:
+        """Execution price after adverse slippage: buys pay up, sells sell low."""
+        rate = self._slippage_rate
+        if rate <= 0:
+            return price
+        return price * (1 + rate) if side.upper() == "BUY" else price * (1 - rate)
+
     def _fill(
         self,
         state: SymbolState,
@@ -443,10 +460,15 @@ class PaperEngine:
         now: float,
     ) -> None:
         account = self.account
+        ref_price = price
+        price = self._slipped_price(side, ref_price)
+        slip = abs(qty) * abs(price - ref_price)
         signed = qty if side == "BUY" else -qty
         fee = abs(signed) * price * fee_rate
         account.cash -= fee
         account.fees += fee
+        account.slippage += slip
+        state.slippage += slip
         realized = 0.0
         if abs(state.position) <= _EPS or (state.position > 0) == (signed > 0):
             new_position = state.position + signed
@@ -469,9 +491,9 @@ class PaperEngine:
         self.gross = self._gross()
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO paper_fills (ts, symbol, side, price, qty, fee, realized, reason)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (_iso(now), state.symbol, side, price, round(qty, 12), fee, realized, reason),
+                "INSERT INTO paper_fills (ts, symbol, side, price, qty, fee, realized, slip,"
+                " reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (_iso(now), state.symbol, side, price, round(qty, 12), fee, realized, slip, reason),
             )
 
     def _funding_rate_at(self, symbol: str, ts: int) -> float | None:
@@ -642,6 +664,18 @@ class PaperEngine:
             for column in ("maker_fee", "taker_fee"):
                 if column not in columns:
                     conn.execute(f"ALTER TABLE paper_symbols ADD COLUMN {column} REAL")
+            if "slippage" not in columns:
+                conn.execute(
+                    "ALTER TABLE paper_symbols ADD COLUMN slippage REAL NOT NULL DEFAULT 0"
+                )
+            account_columns = {row[1] for row in conn.execute("PRAGMA table_info(paper_account)")}
+            if "slippage" not in account_columns:
+                conn.execute(
+                    "ALTER TABLE paper_account ADD COLUMN slippage REAL NOT NULL DEFAULT 0"
+                )
+            fill_columns = {row[1] for row in conn.execute("PRAGMA table_info(paper_fills)")}
+            if "slip" not in fill_columns:
+                conn.execute("ALTER TABLE paper_fills ADD COLUMN slip REAL NOT NULL DEFAULT 0")
             conn.commit()
 
     def _save(self) -> None:
@@ -653,6 +687,7 @@ class PaperEngine:
             account.realized,
             account.fees,
             account.funding,
+            account.slippage,
             account.peak_equity,
             self.started_at,
             _iso(time.time()),
@@ -663,28 +698,30 @@ class PaperEngine:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO paper_account (id, status, config, cash, realized, fees, funding,"
-                " peak_equity, started_at, updated_at, last_error, equity, gross) VALUES"
-                " (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " slippage, peak_equity, started_at, updated_at, last_error, equity, gross) VALUES"
+                " (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(id) DO UPDATE SET status=excluded.status, config=excluded.config,"
                 " cash=excluded.cash, realized=excluded.realized, fees=excluded.fees,"
-                " funding=excluded.funding, peak_equity=excluded.peak_equity,"
-                " started_at=excluded.started_at, updated_at=excluded.updated_at,"
-                " last_error=excluded.last_error, equity=excluded.equity, gross=excluded.gross",
+                " funding=excluded.funding, slippage=excluded.slippage,"
+                " peak_equity=excluded.peak_equity, started_at=excluded.started_at,"
+                " updated_at=excluded.updated_at, last_error=excluded.last_error,"
+                " equity=excluded.equity, gross=excluded.gross",
                 payload,
             )
             for state in self.state.values():
                 conn.execute(
                     "INSERT INTO paper_symbols (symbol, mark, index_price, change_pct, funding_rate,"
                     " anchor, step, unit, tick_size, step_size, min_qty, position, avg_entry,"
-                    " maker_fee, taker_fee, funding_next, funding_interval)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    " maker_fee, taker_fee, slippage, funding_next, funding_interval)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                     " ON CONFLICT(symbol) DO UPDATE SET mark=excluded.mark,"
                     " index_price=excluded.index_price, change_pct=excluded.change_pct,"
                     " funding_rate=excluded.funding_rate, anchor=excluded.anchor, step=excluded.step,"
                     " unit=excluded.unit, tick_size=excluded.tick_size, step_size=excluded.step_size,"
                     " min_qty=excluded.min_qty, position=excluded.position,"
                     " avg_entry=excluded.avg_entry, maker_fee=excluded.maker_fee,"
-                    " taker_fee=excluded.taker_fee, funding_next=excluded.funding_next,"
+                    " taker_fee=excluded.taker_fee, slippage=excluded.slippage,"
+                    " funding_next=excluded.funding_next,"
                     " funding_interval=excluded.funding_interval",
                     (
                         state.symbol,
@@ -702,6 +739,7 @@ class PaperEngine:
                         state.avg_entry,
                         state.maker_fee,
                         state.taker_fee,
+                        state.slippage,
                         state.funding_next,
                         state.funding_interval,
                     ),
@@ -734,6 +772,7 @@ class PaperEngine:
             realized=row["realized"],
             fees=row["fees"],
             funding=row["funding"],
+            slippage=row["slippage"],
             peak_equity=row["peak_equity"],
         )
         self.equity = row["equity"]
@@ -759,12 +798,87 @@ class PaperEngine:
                 avg_entry=symbol_row["avg_entry"],
                 maker_fee=symbol_row["maker_fee"],
                 taker_fee=symbol_row["taker_fee"],
+                slippage=symbol_row["slippage"],
                 funding_next=symbol_row["funding_next"],
                 funding_interval=symbol_row["funding_interval"],
             )
         self.state = states
 
     # -- read models -----------------------------------------------------
+
+    def cost_report(self) -> dict[str, Any]:
+        """Round-trip cost estimate for the live paper parameters, in bp.
+
+        The grid rests POST_ONLY orders on both legs, so the headline
+        ``round_trip_bp`` is maker/maker; ``round_trip_taker_bp`` covers the
+        stop/flatten path. Funding is the mean current rate over the symbols,
+        normalised to an 8h interval, and per-symbol rows use each contract's
+        own funding interval. This block lets the UI answer "does the current
+        ``spacing_bp`` still cover fees + slippage + funding?".
+        """
+        cfg = self.config
+        rates = [state.funding_rate for state in self.state.values()]
+        funding = sum(rates) / len(rates) if rates else 0.0
+        model = CostModel(
+            maker_fee_bp=float(cfg.maker_fee_bp),
+            taker_fee_bp=max(0.0, float(cfg.taker_fee_bp)),
+            slippage_bp=max(0.0, float(cfg.slippage_bp)),
+            funding_rate_8h=funding,
+            funding_interval_h=8.0,
+        )
+        spacing_bp = float(cfg.spacing_bp)
+        report: dict[str, Any] = {
+            **model.describe(),
+            "spacing_bp": spacing_bp,
+            "round_trip_bp": model.round_trip_bp(entry_taker=False, exit_taker=False),
+            "round_trip_taker_bp": model.round_trip_bp(entry_taker=True, exit_taker=True),
+            "breakeven_spacing_bp": model.breakeven_spacing_bp(
+                entry_taker=False, exit_taker=False
+            ),
+            "net_edge_bp": model.net_edge_bp(spacing_bp, entry_taker=False, exit_taker=False),
+            "is_profitable": model.is_profitable(
+                spacing_bp, entry_taker=False, exit_taker=False
+            ),
+            "symbols": {},
+        }
+        per_symbol: dict[str, dict[str, Any]] = {}
+        for state in self.state.values():
+            interval_h = max(1.0, state.funding_interval / 3600.0)
+            symbol_spacing_bp = (
+                state.step / state.mark * 1e4
+                if state.mark > 0 and state.step > 0
+                else spacing_bp
+            )
+            symbol_model = CostModel(
+                maker_fee_bp=model.maker_fee_bp,
+                taker_fee_bp=model.taker_fee_bp,
+                slippage_bp=model.slippage_bp,
+                funding_rate_8h=state.funding_rate,
+                funding_interval_h=interval_h,
+            )
+            per_symbol[state.symbol] = {
+                "spacing_bp": symbol_spacing_bp,
+                "round_trip_bp": symbol_model.round_trip_bp(
+                    entry_taker=False, exit_taker=False
+                ),
+                "round_trip_taker_bp": symbol_model.round_trip_bp(
+                    entry_taker=True, exit_taker=True
+                ),
+                "breakeven_spacing_bp": symbol_model.breakeven_spacing_bp(
+                    entry_taker=False, exit_taker=False
+                ),
+                "net_edge_bp": symbol_model.net_edge_bp(
+                    symbol_spacing_bp, entry_taker=False, exit_taker=False
+                ),
+                "is_profitable": symbol_model.is_profitable(
+                    symbol_spacing_bp, entry_taker=False, exit_taker=False
+                ),
+                "funding_rate": state.funding_rate,
+                "funding_interval_h": interval_h,
+                "slippage": state.slippage,
+            }
+        report["symbols"] = per_symbol
+        return report
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -800,6 +914,7 @@ class PaperEngine:
                         "maker_fee_bp": (state.maker_fee if state.maker_fee is not None else self.config.maker_fee_bp / 1e4) * 1e4,
                         "taker_fee_bp": (state.taker_fee if state.taker_fee is not None else self.config.taker_fee_bp / 1e4) * 1e4,
                         "fee_source": "exchange" if state.maker_fee is not None else "config",
+                        "slippage": state.slippage,
                     }
                 )
             with self._connect() as conn:
@@ -834,6 +949,7 @@ class PaperEngine:
                     "realized": account.realized,
                     "fees": account.fees,
                     "funding": account.funding,
+                    "slippage": account.slippage,
                     "gross_notional": self.gross,
                     "margin_used": self.gross / max(1.0, self.config.leverage),
                     "leverage": self.config.leverage,
@@ -847,4 +963,5 @@ class PaperEngine:
                 "fills": fills,
                 "funding": funding,
                 "equity": equity_rows,
+                "cost": self.cost_report(),
             }

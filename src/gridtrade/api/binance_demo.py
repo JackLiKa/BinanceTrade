@@ -58,6 +58,8 @@ from urllib.parse import urlencode
 
 import httpx
 
+from ..strategy.costs import CostModel
+
 logger = logging.getLogger(__name__)
 
 DEMO_BASE_URL = "https://demo-fapi.binance.com"
@@ -187,6 +189,105 @@ def _mask_key(key: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# order/fill semantics: open-long / open-short / close-long / close-short
+# ---------------------------------------------------------------------------
+
+ACTIONS = ("OPEN_LONG", "OPEN_SHORT", "CLOSE_LONG", "CLOSE_SHORT")
+ACTION_LABELS = {
+    "OPEN_LONG": "开多",
+    "OPEN_SHORT": "开空",
+    "CLOSE_LONG": "平多",
+    "CLOSE_SHORT": "平空",
+}
+
+
+def classify_action(
+    side: str,
+    position_side: str | None = None,
+    reduce_only: bool = False,
+) -> str:
+    """Map ``(side, positionSide, reduceOnly)`` to a grid-friendly action.
+
+    Hedge mode (``positionSide=LONG|SHORT``) is unambiguous:
+    ``BUY+LONG`` opens a long, ``SELL+LONG`` closes it, ``SELL+SHORT`` opens a
+    short and ``BUY+SHORT`` closes it. One-way mode has no ``positionSide``, so
+    ``reduceOnly`` decides between open and close.
+    """
+    side_u = (side or "").strip().upper()
+    ps_u = (position_side or "").strip().upper()
+    if ps_u == "LONG":
+        return "OPEN_LONG" if side_u == "BUY" else "CLOSE_LONG"
+    if ps_u == "SHORT":
+        return "OPEN_SHORT" if side_u == "SELL" else "CLOSE_SHORT"
+    if reduce_only:
+        return "CLOSE_LONG" if side_u == "SELL" else "CLOSE_SHORT"
+    return "OPEN_LONG" if side_u == "BUY" else "OPEN_SHORT"
+
+
+def order_view(order: dict[str, Any]) -> dict[str, Any]:
+    """Enrich one ``/fapi/v1/order(s)`` row with action + notional."""
+    side = str(order.get("side") or "")
+    position_side = order.get("positionSide")
+    reduce_only = bool(order.get("reduceOnly"))
+    price = _opt_float(order.get("price")) or _opt_float(order.get("avgPrice")) or 0.0
+    qty = _opt_float(order.get("origQty")) or 0.0
+    executed = _opt_float(order.get("executedQty")) or 0.0
+    action = classify_action(side, position_side, reduce_only)
+    return {
+        "orderId": order.get("orderId"),
+        "clientOrderId": order.get("clientOrderId"),
+        "symbol": order.get("symbol"),
+        "side": side,
+        "positionSide": position_side,
+        "action": action,
+        "actionLabel": ACTION_LABELS[action],
+        "type": order.get("type"),
+        "status": order.get("status"),
+        "price": order.get("price"),
+        "avgPrice": order.get("avgPrice"),
+        "origQty": order.get("origQty"),
+        "executedQty": order.get("executedQty"),
+        "notional": round(price * (executed or qty), 8),
+        "cumQuote": order.get("cumQuote"),
+        "time": order.get("time"),
+        "updateTime": order.get("updateTime"),
+        "reduceOnly": reduce_only,
+    }
+
+
+def fill_view(fill: dict[str, Any]) -> dict[str, Any]:
+    """Enrich one ``/fapi/v1/userTrades`` row: action, notional, fee (bp)."""
+    side = str(fill.get("side") or "")
+    position_side = fill.get("positionSide")
+    reduce_only = bool(fill.get("reduceOnly")) or fill.get("realizedPnl") not in (None, "", "0")
+    price = _opt_float(fill.get("price")) or 0.0
+    qty = _opt_float(fill.get("qty")) or 0.0
+    commission = _opt_float(fill.get("commission")) or 0.0
+    notional = price * qty
+    action = classify_action(side, position_side, reduce_only and not position_side)
+    fee_bp = (commission / notional * 10_000.0) if notional else 0.0
+    return {
+        "id": fill.get("id"),
+        "orderId": fill.get("orderId"),
+        "symbol": fill.get("symbol"),
+        "side": side,
+        "positionSide": position_side,
+        "action": action,
+        "actionLabel": ACTION_LABELS[action],
+        "price": fill.get("price"),
+        "qty": fill.get("qty"),
+        "quoteQty": fill.get("quoteQty"),
+        "notional": round(notional, 8),
+        "commission": fill.get("commission"),
+        "commissionAsset": fill.get("commissionAsset"),
+        "feeBp": round(fee_bp, 4),
+        "realizedPnl": fill.get("realizedPnl"),
+        "maker": fill.get("maker"),
+        "time": fill.get("time"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # config / errors
 # ---------------------------------------------------------------------------
 
@@ -211,6 +312,9 @@ class BinanceDemoConfig:
     max_open_orders: int = DEFAULT_MAX_OPEN_ORDERS
     kill_switch_file: str = DEFAULT_KILL_SWITCH_FILE
     position_mode: str = "auto"  # auto | oneway | hedge
+    maker_fee_bp: float = 2.0
+    taker_fee_bp: float = 5.0
+    slippage_bp: float = 0.2
 
     @property
     def configured(self) -> bool:
@@ -235,6 +339,9 @@ class BinanceDemoConfig:
             max_open_orders=_env_int("BINANCE_MAX_OPEN_ORDERS", DEFAULT_MAX_OPEN_ORDERS),
             kill_switch_file=_env_str("BINANCE_KILL_SWITCH_FILE", DEFAULT_KILL_SWITCH_FILE),
             position_mode=_position_mode_env(),
+            maker_fee_bp=_env_float("BINANCE_MAKER_FEE_BP", 2.0),
+            taker_fee_bp=_env_float("BINANCE_TAKER_FEE_BP", 5.0),
+            slippage_bp=_env_float("BINANCE_SLIPPAGE_BP", 0.2),
         )
 
 
@@ -494,6 +601,13 @@ class BinanceDemoClient:
         params = {"symbol": symbol.strip().upper(), "orderId": order_id}
         return _as_dict(self._request("GET", "/fapi/v1/order", params, signed=True))
 
+    def all_orders(self, symbol: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """``GET /fapi/v1/allOrders``: order history (newest last)."""
+        params: dict[str, Any] = {"limit": limit}
+        if symbol:
+            params["symbol"] = symbol.strip().upper()
+        return _as_list(self._request("GET", "/fapi/v1/allOrders", params, signed=True))
+
     def income(
         self,
         symbol: str | None = None,
@@ -743,6 +857,35 @@ class BinanceDemoClient:
 
     # -- status ----------------------------------------------------------
 
+    def cost_report(self, spacing_bp: float | None = None) -> dict[str, Any]:
+        """Expected round-trip cost for this account's fee assumptions.
+
+        Real fees always come from the exchange fills (``commission``); this is
+        the *planning* estimate used to sanity-check a grid spacing before it is
+        deployed. ``spacing_bp`` fills in ``net_edge_bp`` / ``is_profitable``.
+        """
+        model = CostModel(
+            maker_fee_bp=self.cfg.maker_fee_bp,
+            taker_fee_bp=self.cfg.taker_fee_bp,
+            slippage_bp=self.cfg.slippage_bp,
+        )
+        out: dict[str, Any] = dict(model.describe())
+        out["assumed"] = {
+            "maker_fee_bp": self.cfg.maker_fee_bp,
+            "taker_fee_bp": self.cfg.taker_fee_bp,
+            "slippage_bp": self.cfg.slippage_bp,
+        }
+        if spacing_bp is not None:
+            out["spacing_bp"] = spacing_bp
+            out["round_trip_bp"] = model.round_trip_bp(entry_taker=False, exit_taker=False)
+            out["net_edge_bp"] = model.net_edge_bp(
+                spacing_bp, entry_taker=False, exit_taker=False
+            )
+            out["is_profitable"] = model.is_profitable(
+                spacing_bp, entry_taker=False, exit_taker=False
+            )
+        return out
+
     def health(self) -> dict[str, Any]:
         """Offline-safe summary plus one ``GET /fapi/v1/time`` reachability probe."""
         info: dict[str, Any] = {
@@ -753,6 +896,7 @@ class BinanceDemoClient:
             "server_offset_ms": self.server_time_offset_ms,
             "position_mode": self.cfg.position_mode,
             "dual_side_position": self._dual_side,
+            "cost": self.cost_report(),
             "reachable": False,
         }
         try:

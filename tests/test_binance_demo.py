@@ -693,3 +693,104 @@ def test_masked_never_exposes_secret() -> None:
         assert empty.masked() == {"api_key_hint": "", "has_secret": False}
     finally:
         empty.close()
+
+
+# ---------------------------------------------------------------------------
+# order / fill semantics (open-long, open-short, close-long, close-short)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_action_covers_hedge_and_one_way_modes() -> None:
+    assert binance_demo.classify_action("BUY", "LONG") == "OPEN_LONG"
+    assert binance_demo.classify_action("SELL", "LONG") == "CLOSE_LONG"
+    assert binance_demo.classify_action("SELL", "SHORT") == "OPEN_SHORT"
+    assert binance_demo.classify_action("BUY", "SHORT") == "CLOSE_SHORT"
+    # one-way mode: reduceOnly decides
+    assert binance_demo.classify_action("BUY", None, reduce_only=False) == "OPEN_LONG"
+    assert binance_demo.classify_action("SELL", None, reduce_only=False) == "OPEN_SHORT"
+    assert binance_demo.classify_action("SELL", None, reduce_only=True) == "CLOSE_LONG"
+    assert binance_demo.classify_action("BUY", None, reduce_only=True) == "CLOSE_SHORT"
+    assert binance_demo.ACTION_LABELS["OPEN_LONG"] == "开多"
+    assert binance_demo.ACTION_LABELS["CLOSE_SHORT"] == "平空"
+
+
+def test_fill_view_computes_action_notional_and_fee_bp() -> None:
+    raw = {
+        "id": 5,
+        "orderId": 9001,
+        "symbol": "DOGEUSDT",
+        "side": "SELL",
+        "positionSide": "LONG",
+        "price": "0.0500",
+        "qty": "100",
+        "quoteQty": "5.0",
+        "commission": "0.00375",
+        "commissionAsset": "USDT",
+        "realizedPnl": "0.12",
+        "maker": False,
+        "time": 1794935814910,
+    }
+    view = binance_demo.fill_view(raw)
+    assert view["action"] == "CLOSE_LONG"
+    assert view["actionLabel"] == "平多"
+    assert view["notional"] == pytest.approx(5.0)
+    assert view["feeBp"] == pytest.approx(7.5, abs=1e-6)  # 0.00375 / 5 USDT
+    assert view["commissionAsset"] == "USDT"
+    assert view["orderId"] == 9001
+
+
+def test_order_view_carries_order_id_and_action_label() -> None:
+    raw = {
+        "orderId": 106275811132,
+        "clientOrderId": "abc",
+        "symbol": "DOGEUSDT",
+        "side": "BUY",
+        "positionSide": "LONG",
+        "type": "LIMIT",
+        "status": "NEW",
+        "price": "0.056870",
+        "origQty": "103",
+        "executedQty": "0",
+        "time": 1794935814910,
+    }
+    view = binance_demo.order_view(raw)
+    assert view["orderId"] == 106275811132
+    assert view["clientOrderId"] == "abc"
+    assert view["action"] == "OPEN_LONG"
+    assert view["actionLabel"] == "开多"
+    assert view["notional"] == pytest.approx(103 * 0.056870, rel=1e-9)
+
+
+def test_all_orders_and_fills_hit_documented_paths() -> None:
+    seen: list[httpx.Request] = []
+    routes: dict[tuple[str, str], Responder] = {
+        ("GET", "/fapi/v1/allOrders"): [{"orderId": 1, "side": "BUY", "symbol": "DOGEUSDT"}],
+        ("GET", "/fapi/v1/userTrades"): [{"id": 2, "side": "SELL", "symbol": "DOGEUSDT"}],
+    }
+    client = make_client(handler_for(routes, seen))
+    assert client.all_orders("dogeusdt", limit=20)[0]["orderId"] == 1
+    assert client.fills("dogeusdt", limit=20)[0]["id"] == 2
+    used = {request.url.path for request in seen}
+    assert used == {"/fapi/v1/allOrders", "/fapi/v1/userTrades"}
+    body = pairs(seen[0].url.query)
+    assert value_of(body, "limit") == "20"
+    assert value_of(body, "symbol") == "DOGEUSDT"
+    assert value_of(body, "signature") == expected_signature(body)
+
+
+def test_cost_report_uses_fee_assumptions_and_flags_spacing() -> None:
+    client = make_client(
+        no_network, maker_fee_bp=2.0, taker_fee_bp=5.0, slippage_bp=0.2
+    )
+    base = client.cost_report()
+    assert base["assumed"]["slippage_bp"] == 0.2
+    assert base["round_trip_maker_bp"] == pytest.approx(4.4)
+    report = client.cost_report(spacing_bp=10.0)
+    assert report["round_trip_bp"] == pytest.approx(4.4)
+    assert report["net_edge_bp"] == pytest.approx(5.6)
+    assert report["is_profitable"] is True
+    tight = client.cost_report(spacing_bp=1.0)
+    assert tight["is_profitable"] is False
+    health = client.health()
+    assert "cost" in health
+    assert health["cost"]["round_trip_maker_bp"] == pytest.approx(4.4)

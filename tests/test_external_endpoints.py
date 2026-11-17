@@ -14,13 +14,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # path -> official documentation reference
 BINANCE_FAPI = {
+    # public market data (panel + dataset fetch)
     "/fapi/v1/premiumIndex": "Binance USDⓈ-M Futures · Mark Price",
     "/fapi/v1/ticker/24hr": "Binance USDⓈ-M Futures · 24hr Ticker Price Change Statistics",
+    "/fapi/v1/ticker/bookTicker": "Binance USDⓈ-M Futures · Symbol Order Book Ticker",
     "/fapi/v1/klines": "Binance USDⓈ-M Futures · Kline Candlestick Data",
     "/fapi/v1/fundingRate": "Binance USDⓈ-M Futures · Get Funding Rate History",
     "/fapi/v1/exchangeInfo": "Binance USDⓈ-M Futures · Exchange Information",
     "/fapi/v1/fundingInfo": "Binance USDⓈ-M Futures · Get Funding Rate Info",
     "/fapi/v1/tradingSchedule": "Binance USDⓈ-M Futures · Trading Schedule",
+    "/fapi/v1/time": "Binance USDⓈ-M Futures · Check Server Time",
+    # signed account/read-only (execution adapter, demo + live)
+    "/fapi/v2/account": "Binance USDⓈ-M Futures · Account Information V2",
+    "/fapi/v2/positionRisk": "Binance USDⓈ-M Futures · Position Information V2",
+    "/fapi/v1/openOrders": "Binance USDⓈ-M Futures · Current All Open Orders",
+    "/fapi/v1/allOrders": "Binance USDⓈ-M Futures · All Orders",
+    "/fapi/v1/income": "Binance USDⓈ-M Futures · Get Income History",
+    "/fapi/v1/userTrades": "Binance USDⓈ-M Futures · Account Trade List",
+    "/fapi/v1/positionSide/dual": "Binance USDⓈ-M Futures · Get Current Position Mode",
+    # signed trading (locked behind BINANCE_TRADING + kill switch + confirm)
+    "/fapi/v1/order": "Binance USDⓈ-M Futures · New/Query/Cancel Order",
+    "/fapi/v1/allOpenOrders": "Binance USDⓈ-M Futures · Cancel All Open Orders",
+    "/fapi/v1/leverage": "Binance USDⓈ-M Futures · Change Initial Leverage",
 }
 
 GATE_FUTURES = {
@@ -39,12 +54,22 @@ GATE_FUTURES = {
     "/futures/{settle}/fee": "Gate API v4 · Futures · Query trading fee rates",
 }
 
-ALLOWED_HOSTS = {"fapi.binance.com", "api.gateio.ws"}
+# ``10.66.0.2`` is not an exchange: it is the internal WireGuard address of the
+# Tokyo execution node that the panel proxies to (never a public endpoint).
+ALLOWED_HOSTS = {
+    "fapi.binance.com",
+    "demo-fapi.binance.com",  # official demo/testnet base for the futures API
+    "api.gateio.ws",
+    "10.66.0.2",
+}
 
 SOURCE_FILES = [
     ROOT / "src/gridtrade/api/live.py",
     ROOT / "src/gridtrade/api/live_gate.py",
     ROOT / "src/gridtrade/api/paper.py",
+    ROOT / "src/gridtrade/api/binance_demo.py",
+    ROOT / "src/gridtrade/api/binance_node.py",
+    ROOT / "src/gridtrade/api/adapter_server.py",
     ROOT / "research/fetch.py",
 ]
 
@@ -80,6 +105,6 @@ def test_only_known_exchange_hosts_are_used() -> None:
     hosts: set[str] = set()
     for file in SOURCE_FILES:
         text = file.read_text(encoding="utf-8")
-        hosts |= set(re.findall(r'https?://([^"/\s]+)', text))
+        hosts |= set(re.findall(r'https?://([A-Za-z0-9.-]+)', text))
     unexpected = hosts - ALLOWED_HOSTS
     assert not unexpected, f"unexpected external hosts: {sorted(unexpected)}"

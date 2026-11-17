@@ -27,10 +27,13 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from gridtrade.api.binance_demo import (
+    ACTION_LABELS,
     BinanceDemoClient,
     BinanceDemoConfig,
     BinanceError,
     BinanceLocked,
+    fill_view,
+    order_view,
 )
 
 logger = logging.getLogger("gridtrade.adapter")
@@ -105,7 +108,26 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(HTTPStatus.OK, {"ok": True, "positions": client.positions_nonzero(symbol)})
                     return
                 if route == "/open_orders":
-                    self._send(HTTPStatus.OK, {"ok": True, "orders": client.open_orders(symbol)})
+                    rows = [order_view(row) for row in client.open_orders(symbol)]
+                    self._send(HTTPStatus.OK, {"ok": True, "orders": rows})
+                    return
+                if route == "/orders":
+                    limit = int((query.get("limit") or ["50"])[0])
+                    rows = [order_view(row) for row in client.all_orders(symbol, limit=limit)]
+                    rows.sort(key=lambda row: row.get("time") or 0, reverse=True)
+                    self._send(
+                        HTTPStatus.OK,
+                        {"ok": True, "orders": rows, "actions": ACTION_LABELS},
+                    )
+                    return
+                if route == "/fills":
+                    limit = int((query.get("limit") or ["50"])[0])
+                    rows = [fill_view(row) for row in client.fills(symbol, limit=limit)]
+                    rows.sort(key=lambda row: row.get("time") or 0, reverse=True)
+                    self._send(
+                        HTTPStatus.OK,
+                        {"ok": True, "fills": rows, "actions": ACTION_LABELS},
+                    )
                     return
                 self._send(HTTPStatus.NOT_FOUND, {"ok": False, "msg": "unknown route"})
         except BinanceError as exc:

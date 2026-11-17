@@ -869,6 +869,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ("account", client.account),
                 ("positions", lambda: client.positions(symbol)),
                 ("orders", lambda: client.open_orders(symbol)),
+                ("fills", lambda: client.fills(symbol, limit=20)),
+                ("history", lambda: client.all_orders(symbol, limit=20)),
             ):
                 try:
                     out[key] = fn()

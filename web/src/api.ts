@@ -327,6 +327,23 @@ export interface LiveOrderInput {
 
 // -- Binance execution node (Tokyo, tunnel-only, read-only from the panel) ----
 
+export interface BinanceCostReport {
+  maker_fee_bp?: number
+  taker_fee_bp?: number
+  slippage_bp?: number
+  funding_rate_8h?: number
+  funding_bp_per_8h?: number
+  round_trip_maker_bp?: number
+  round_trip_taker_bp?: number
+  round_trip_taker_8h_bp?: number
+  breakeven_spacing_bp?: number
+  assumed?: { maker_fee_bp?: number; taker_fee_bp?: number; slippage_bp?: number }
+  spacing_bp?: number
+  round_trip_bp?: number
+  net_edge_bp?: number
+  is_profitable?: boolean
+}
+
 export interface BinanceNodeHealth {
   ok: boolean
   configured: boolean
@@ -336,6 +353,7 @@ export interface BinanceNodeHealth {
   server_offset_ms: number
   position_mode?: string
   dual_side_position?: boolean | null
+  cost?: BinanceCostReport
   reachable: boolean
   server_time?: { serverTime: number }
   error?: string
@@ -367,16 +385,42 @@ export interface BinancePositionView {
 
 export interface BinanceOrderView {
   orderId: number
+  clientOrderId?: string
   symbol: string
   side: string
   type: string
   price: string
+  avgPrice?: string
   origQty: string
   executedQty?: string
   status: string
   positionSide?: string
+  action?: string
+  actionLabel?: string
+  notional?: number
+  cumQuote?: string
   time?: number
   reduceOnly?: boolean
+}
+
+export interface BinanceFillView {
+  id?: number
+  orderId?: number
+  symbol: string
+  side: string
+  positionSide?: string
+  action?: string
+  actionLabel?: string
+  price: string
+  qty: string
+  quoteQty?: string
+  notional?: number
+  commission?: string
+  commissionAsset?: string
+  feeBp?: number
+  realizedPnl?: string
+  maker?: boolean
+  time?: number
 }
 
 export interface BinanceState {
@@ -385,6 +429,8 @@ export interface BinanceState {
   account?: { ok: boolean; account: BinanceAccountView }
   positions?: { ok: boolean; positions: BinancePositionView[] }
   orders?: { ok: boolean; orders: BinanceOrderView[] }
+  fills?: { ok: boolean; fills: BinanceFillView[] }
+  history?: { ok: boolean; orders: BinanceOrderView[] }
   errors?: Record<string, string>
 }
 

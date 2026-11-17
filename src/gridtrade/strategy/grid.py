@@ -11,9 +11,11 @@ partial fills and external reconciliation cannot desynchronize it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ..domain.models import Bar, Fill, OrderIntent, OrderType, Side, TimeInForce
 from .base import Strategy, StrategyContext
+from .costs import CostModel
 
 _EPS = 1e-9
 
@@ -25,6 +27,7 @@ class GridParams:
     leverage: float = 1.0
     reanchor_bars: int | None = None
     group: str = "grid"
+    min_edge_bp: float = 0.0
 
     def __post_init__(self) -> None:
         if self.spacing_bp <= 0:
@@ -33,12 +36,21 @@ class GridParams:
             raise ValueError("levels must be positive")
         if self.leverage <= 0:
             raise ValueError("leverage must be positive")
+        if self.min_edge_bp < 0:
+            raise ValueError("min_edge_bp must be non-negative")
 
 
 class GridStrategy(Strategy):
-    def __init__(self, symbol: str, params: GridParams) -> None:
+    def __init__(
+        self,
+        symbol: str,
+        params: GridParams,
+        *,
+        cost_model: CostModel | None = None,
+    ) -> None:
         self.symbol = symbol
         self.params = params
+        self._cost_model = cost_model if cost_model is not None else CostModel()
         self.anchor: float = 0.0
         self.step: float = 0.0
         self.size: float = 0.0
@@ -56,6 +68,7 @@ class GridStrategy(Strategy):
         return f"grid/{p.spacing_bp:g}bp/{p.levels}L/{p.leverage:g}x"
 
     def on_start(self, ctx: StrategyContext) -> list[OrderIntent]:
+        self._validate_cost()
         self._reset(ctx.mark_price, ctx)
         return self._plan()
 
@@ -100,6 +113,67 @@ class GridStrategy(Strategy):
             "grid_inventory": -self.level * self.size,
             "reanchor_pending": self._pending_reanchor,
         }
+
+    def cost_report(self) -> dict[str, Any]:
+        """Round-trip cost accounting for the configured spacing.
+
+        The grid normally rests POST_ONLY orders on both legs, so the headline
+        ``round_trip_bp`` uses maker fees for entry and exit (that is also what
+        the ``min_edge_bp`` guard checks). ``round_trip_taker_bp`` gives the
+        taker/taker variant for comparison. Example with the default model
+        (2bp maker) and ``spacing_bp=10``: ``round_trip_bp == 4.0``,
+        ``breakeven_spacing_bp == 4.0`` and ``net_edge_bp == 6.0``.
+        """
+        model = self._cost_model
+        spacing = self.params.spacing_bp
+        return {
+            **model.describe(),
+            "spacing_bp": spacing,
+            "round_trip_bp": model.round_trip_bp(entry_taker=False, exit_taker=False),
+            "round_trip_taker_bp": model.round_trip_bp(entry_taker=True, exit_taker=True),
+            "breakeven_spacing_bp": model.breakeven_spacing_bp(
+                entry_taker=False, exit_taker=False
+            ),
+            "net_edge_bp": model.net_edge_bp(spacing, entry_taker=False, exit_taker=False),
+            "is_profitable": model.is_profitable(
+                spacing,
+                min_edge_bp=self.params.min_edge_bp,
+                entry_taker=False,
+                exit_taker=False,
+            ),
+            "min_edge_bp": self.params.min_edge_bp,
+        }
+
+    def describe(self) -> dict[str, Any]:
+        """Strategy description for artifacts/logs, including the ``cost`` block."""
+        p = self.params
+        return {
+            "strategy_id": self.strategy_id,
+            "symbol": self.symbol,
+            "spacing_bp": p.spacing_bp,
+            "levels": p.levels,
+            "leverage": p.leverage,
+            "min_edge_bp": p.min_edge_bp,
+            "state": self.state(),
+            "cost": self.cost_report(),
+        }
+
+    def _validate_cost(self) -> None:
+        """Refuse to start when spacing cannot pay the round trip plus a margin.
+
+        Only active when ``min_edge_bp > 0``; the default of 0 keeps every
+        pre-existing behaviour byte-for-byte. Example message:
+        ``spacing 5bp <= round-trip 4bp + min edge 2bp``.
+        """
+        min_edge = self.params.min_edge_bp
+        if min_edge <= 0:
+            return
+        spacing = self.params.spacing_bp
+        round_trip = self._cost_model.round_trip_bp(entry_taker=False, exit_taker=False)
+        if spacing <= round_trip + min_edge:
+            raise ValueError(
+                f"spacing {spacing:g}bp <= round-trip {round_trip:g}bp + min edge {min_edge:g}bp"
+            )
 
     def _reset(self, anchor: float, ctx: StrategyContext) -> None:
         self.anchor = anchor

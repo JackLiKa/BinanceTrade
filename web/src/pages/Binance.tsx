@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { api, type BinanceOrderView, type BinancePositionView } from '../api'
+import { api, type BinanceFillView, type BinanceOrderView, type BinancePositionView } from '../api'
 import { Badge, Button, Card, CardHead, ErrorNote, Skeleton } from '../components/ui'
 import { useFetch } from '../hooks'
 
@@ -31,6 +31,8 @@ export function Binance() {
   const account = data?.account?.account
   const positions = (data?.positions?.positions ?? []) as BinancePositionView[]
   const orders = (data?.orders?.orders ?? []) as BinanceOrderView[]
+  const fills = (data?.fills?.fills ?? []) as BinanceFillView[]
+  const history = (data?.history?.orders ?? []) as BinanceOrderView[]
   const errors = data?.errors ?? {}
   const offline = !health || health.reachable === false
 
@@ -191,6 +193,8 @@ export function Binance() {
             <table className="w-full min-w-[820px] text-left text-[12px]">
               <thead className="text-[10.5px] uppercase tracking-[0.1em] text-faint">
                 <tr className="border-b border-line-soft">
+                  <th className="py-2 pr-3">动作</th>
+                  <th className="py-2 pr-3">单号</th>
                   <th className="py-2 pr-3">合约</th>
                   <th className="py-2 pr-3">方向</th>
                   <th className="py-2 pr-3">类型</th>
@@ -204,6 +208,15 @@ export function Binance() {
               <tbody>
                 {orders.map((row) => (
                   <tr key={row.orderId} className="border-b border-line-soft/60">
+                    <td className="py-2 pr-3">
+                      <Badge tone={row.action?.startsWith('OPEN') ? 'info' : 'warn'}>
+                        {row.actionLabel ?? row.action ?? row.side}
+                      </Badge>
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-[11px] text-faint">
+                      {row.orderId}
+                      {row.clientOrderId ? <div className="truncate">{row.clientOrderId}</div> : null}
+                    </td>
                     <td className="py-2 pr-3 font-mono text-ink">{row.symbol}</td>
                     <td className="py-2 pr-3">
                       <Badge tone={row.side === 'BUY' ? 'up' : 'down'}>
@@ -222,6 +235,166 @@ export function Binance() {
               </tbody>
             </table>
           </div>
+        )}
+      </Card>
+
+      <Card>
+        <CardHead
+          title="成交明细"
+          hint={`最近 ${fills.length} 笔成交`}
+          right={<span className="text-[11px] text-faint">来自节点 /fills（userTrades）</span>}
+        />
+        {fills.length === 0 ? (
+          <p className="py-6 text-center text-[12px] text-faint">暂无成交</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-[12px]">
+              <thead className="text-[10.5px] uppercase tracking-[0.1em] text-faint">
+                <tr className="border-b border-line-soft">
+                  <th className="py-2 pr-3">动作</th>
+                  <th className="py-2 pr-3">单号</th>
+                  <th className="py-2 pr-3">合约</th>
+                  <th className="py-2 pr-3">方向</th>
+                  <th className="py-2 pr-3 text-right">价格</th>
+                  <th className="py-2 pr-3 text-right">数量</th>
+                  <th className="py-2 pr-3 text-right">名义</th>
+                  <th className="py-2 pr-3 text-right">手续费</th>
+                  <th className="py-2 pr-3 text-right">费率</th>
+                  <th className="py-2 pr-3 text-right">已实现盈亏</th>
+                  <th className="py-2 pr-3">时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fills.map((row, index) => (
+                  <tr key={`${row.id ?? row.orderId}-${index}`} className="border-b border-line-soft/60">
+                    <td className="py-2 pr-3">
+                      <Badge tone={row.action?.startsWith('OPEN') ? 'info' : 'warn'}>
+                        {row.actionLabel ?? row.action ?? row.side}
+                      </Badge>
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-[11px] text-faint">{row.orderId ?? '—'}</td>
+                    <td className="py-2 pr-3 font-mono text-ink">{row.symbol}</td>
+                    <td className="py-2 pr-3">
+                      <Badge tone={row.side === 'BUY' ? 'up' : 'down'}>{row.side}</Badge>
+                    </td>
+                    <td className="py-2 pr-3 text-right font-mono">{money(row.price, 6)}</td>
+                    <td className="py-2 pr-3 text-right font-mono">{sizeText(row.qty)}</td>
+                    <td className="py-2 pr-3 text-right font-mono">{row.notional != null ? money(row.notional, 4) : '—'}</td>
+                    <td className="py-2 pr-3 text-right font-mono">
+                      {row.commission ?? '—'}
+                      {row.commissionAsset ? ` ${row.commissionAsset}` : ''}
+                    </td>
+                    <td className="py-2 pr-3 text-right font-mono">{row.feeBp != null ? `${row.feeBp} bp` : '—'}</td>
+                    <td
+                      className={`py-2 pr-3 text-right font-mono ${num(row.realizedPnl) >= 0 ? 'text-up' : 'text-down'}`}
+                    >
+                      {row.realizedPnl != null ? money(row.realizedPnl, 4) : '—'}
+                    </td>
+                    <td className="py-2 pr-3 text-[11px] text-faint">{stamp(row.time)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <CardHead
+          title="历史订单"
+          hint={`最近 ${history.length} 条`}
+          right={<span className="text-[11px] text-faint">来自节点 /orders（allOrders）</span>}
+        />
+        {history.length === 0 ? (
+          <p className="py-6 text-center text-[12px] text-faint">暂无历史订单</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-left text-[12px]">
+              <thead className="text-[10.5px] uppercase tracking-[0.1em] text-faint">
+                <tr className="border-b border-line-soft">
+                  <th className="py-2 pr-3">动作</th>
+                  <th className="py-2 pr-3">单号</th>
+                  <th className="py-2 pr-3">合约</th>
+                  <th className="py-2 pr-3">类型</th>
+                  <th className="py-2 pr-3 text-right">价格</th>
+                  <th className="py-2 pr-3 text-right">数量</th>
+                  <th className="py-2 pr-3 text-right">成交</th>
+                  <th className="py-2 pr-3">状态</th>
+                  <th className="py-2 pr-3">时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((row) => (
+                  <tr key={row.orderId} className="border-b border-line-soft/60">
+                    <td className="py-2 pr-3">
+                      <Badge tone={row.action?.startsWith('OPEN') ? 'info' : 'warn'}>
+                        {row.actionLabel ?? row.action ?? row.side}
+                      </Badge>
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-[11px] text-faint">
+                      {row.orderId}
+                      {row.clientOrderId ? <div className="truncate">{row.clientOrderId}</div> : null}
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-ink">{row.symbol}</td>
+                    <td className="py-2 pr-3">{row.type}</td>
+                    <td className="py-2 pr-3 text-right font-mono">{money(row.price, 6)}</td>
+                    <td className="py-2 pr-3 text-right font-mono">{sizeText(row.origQty)}</td>
+                    <td className="py-2 pr-3 text-right font-mono">{sizeText(row.executedQty)}</td>
+                    <td className="py-2 pr-3">{row.status}</td>
+                    <td className="py-2 pr-3 text-[11px] text-faint">{stamp(row.time)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <CardHead
+          title="成本模型（计划值）"
+          hint="来自节点 BINANCE_*_FEE_BP / SLIPPAGE_BP 配置；实际费率以成交明细里的 commission 为准"
+        />
+        {health?.cost ? (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-faint">maker 往返</div>
+              <div className="mt-1 font-mono text-[16px] text-ink">
+                {num(health.cost.round_trip_maker_bp).toFixed(2)} bp
+              </div>
+              <div className="text-[11px] text-faint">
+                费率 {num(health.cost.maker_fee_bp).toFixed(2)} bp × 2 + 滑点 2×
+                {num(health.cost.slippage_bp).toFixed(2)} bp
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-faint">taker 往返</div>
+              <div className="mt-1 font-mono text-[16px] text-ink">
+                {num(health.cost.round_trip_taker_bp).toFixed(2)} bp
+              </div>
+              <div className="text-[11px] text-faint">费率 {num(health.cost.taker_fee_bp).toFixed(2)} bp × 2 + 滑点 × 2</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-faint">资金费 / 8h</div>
+              <div className="mt-1 font-mono text-[16px] text-ink">
+                {num(health.cost.funding_bp_per_8h).toFixed(4)} bp
+              </div>
+              <div className="text-[11px] text-faint">正=多头付；空头符号相反</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-faint">保本间距</div>
+              <div className="mt-1 font-mono text-[16px] text-ink">
+                {num(health.cost.breakeven_spacing_bp).toFixed(2)} bp
+              </div>
+              <div className="text-[11px] text-faint">
+                {health.cost.is_profitable != null
+                  ? `当前间距净边际 ${num(health.cost.net_edge_bp).toFixed(2)} bp`
+                  : '网格间距需大于该值才有正期望'}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[12px] text-faint">节点未返回成本模型（升级适配器后可见）。</p>
         )}
       </Card>
 

@@ -130,3 +130,42 @@ def test_state_is_serializable():
     assert state["level"] == 0
     assert state["grid_inventory"] == 0.0
     assert isinstance(state, dict)
+
+
+def test_min_edge_guard_rejects_spacing_below_round_trip_cost():
+    # Default CostModel: 2bp maker on both legs -> 4bp round trip.
+    s = GridStrategy(
+        SYMBOL,
+        GridParams(spacing_bp=5.0, levels=30, leverage=1.0, min_edge_bp=2.0),
+    )
+    with pytest.raises(ValueError, match=r"spacing 5bp <= round-trip 4bp"):
+        s.on_start(ctx(mark=100.0))
+
+
+def test_min_edge_guard_passes_and_cost_report_is_exposed():
+    s = GridStrategy(
+        SYMBOL,
+        GridParams(spacing_bp=10.0, levels=30, leverage=1.0, min_edge_bp=2.0),
+    )
+    intents = s.on_start(ctx(mark=100.0))
+    assert len(intents) == 2
+
+    report = s.cost_report()
+    assert report["spacing_bp"] == pytest.approx(10.0)
+    assert report["round_trip_bp"] == pytest.approx(4.0)
+    assert report["breakeven_spacing_bp"] == pytest.approx(4.0)
+    assert report["net_edge_bp"] == pytest.approx(6.0)
+    assert report["is_profitable"] is True
+    assert report["min_edge_bp"] == pytest.approx(2.0)
+
+    description = s.describe()
+    assert description["symbol"] == SYMBOL
+    assert description["cost"]["spacing_bp"] == pytest.approx(10.0)
+    assert description["cost"]["is_profitable"] is True
+
+
+def test_default_min_edge_keeps_legacy_behaviour():
+    # min_edge_bp defaults to 0: even a 1bp spacing starts without validation.
+    s = GridStrategy(SYMBOL, GridParams(spacing_bp=1.0, levels=30, leverage=1.0))
+    assert len(s.on_start(ctx(mark=100.0))) == 2
+    assert s.cost_report()["is_profitable"] is False

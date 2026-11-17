@@ -132,6 +132,7 @@ class PaperConfig:
     stop_dd_pct: float = 10.0
     maker_fee_bp: float = 2.0
     taker_fee_bp: float = 5.0
+    slippage_bp: float = 0.2
     use_exchange_fees: bool = True
     poll_seconds: float = 3.0
 
@@ -149,6 +150,7 @@ class PaperConfig:
             stop_dd_pct=_as_float("GRIDTRADE_PAPER_STOP_DD_PCT", 10.0),
             maker_fee_bp=_as_float("GRIDTRADE_PAPER_MAKER_FEE_BP", 2.0),
             taker_fee_bp=_as_float("GRIDTRADE_PAPER_TAKER_FEE_BP", 5.0),
+            slippage_bp=max(0.0, _as_float("GRIDTRADE_PAPER_SLIPPAGE_BP", 0.2)),
             use_exchange_fees=_env_bool("GRIDTRADE_PAPER_USE_EXCHANGE_FEES", True),
             poll_seconds=max(1.0, _as_float("GRIDTRADE_PAPER_POLL_SECONDS", 3.0)),
         )

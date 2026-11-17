@@ -92,3 +92,24 @@ def test_context_manager_closes_owned_client() -> None:
     with client as entered:
         assert entered is client
     assert client._http.is_closed
+
+
+def test_fills_and_all_orders_proxy_paths() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/fills":
+            return httpx.Response(200, json={"ok": True, "fills": []})
+        if request.url.path == "/orders":
+            return httpx.Response(200, json={"ok": True, "orders": []})
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    client = make_client(handler)
+    assert client.fills("dogeusdt", limit=10)["ok"] is True
+    assert client.all_orders(limit=5)["ok"] is True
+    fills = next(r for r in seen if r.url.path == "/fills")
+    orders = next(r for r in seen if r.url.path == "/orders")
+    assert "limit=10" in str(fills.url)
+    assert "symbol=DOGEUSDT" in str(fills.url)
+    assert "limit=5" in str(orders.url)
