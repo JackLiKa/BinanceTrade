@@ -180,7 +180,7 @@ class ResearchService:
             interval = (dataset.meta or {}).get("funding_interval_hours")
         except KeyError:
             dataset = None
-        if snapshot.get("source") == "binance":
+        if snapshot.get("source") in {"binance", "node"}:
             snapshot["funding_interval_hours"] = interval
             return snapshot
 
@@ -269,6 +269,36 @@ class ResearchService:
             "to": points[-1][0] if points else None,
             "candles": points,
         }
+
+    async def market_candles(
+        self,
+        symbol: str,
+        *,
+        interval: str,
+        limit: int,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> dict[str, Any]:
+        """K-lines with the freshest available source.
+
+        The Tokyo node can reach Binance while this host often cannot, so when a
+        node is configured and no explicit historical window is requested we ask
+        it for real-time bars and only then fall back to the local dataset.
+        """
+        if self.live.node_enabled and not start and not end:
+            live = await self.live.node_candles(symbol, interval, limit)
+            if live is not None:
+                return live
+        return await asyncio.to_thread(
+            self.candles, symbol, interval=interval, limit=limit, start=start, end=end
+        )
+
+    async def market_funding(self, symbol: str, *, limit: int = 300) -> dict[str, Any]:
+        if self.live.node_enabled:
+            live = await self.live.node_funding(symbol, limit)
+            if live is not None:
+                return {"symbol": symbol, "count": live.get("count", 0), "funding": live["funding"], "source": "node"}
+        return await asyncio.to_thread(self.funding, symbol, limit=limit)
 
     def funding(self, symbol: str, *, limit: int = 300) -> dict[str, Any]:
         dataset = self.dataset(symbol)

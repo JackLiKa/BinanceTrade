@@ -253,7 +253,11 @@ class AdminPasswordRequest(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = Store(settings.var_dir / "gridtrade.db")
-    live = LiveMarket(enabled=settings.market_live, proxy=settings.proxy)
+    live = LiveMarket(
+        enabled=settings.market_live,
+        proxy=settings.proxy,
+        node_url=settings.binance_node_url,
+    )
     service = ResearchService(settings.data_dir, live)
     jobs = JobQueue(store, workers=2)
     paper = PaperEngine(settings.paper, settings.var_dir)
@@ -282,7 +286,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             jobs.stop()
             paper.close()
-            live_service.close()
+            getattr(live_service, "close", lambda: None)()
             await live.close()
 
     app = FastAPI(
@@ -442,8 +446,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=400, detail=f"interval must be one of {', '.join(INTERVALS)}"
             )
         try:
-            return await asyncio.to_thread(
-                service.candles,
+            return await service.market_candles(
                 resolved,
                 interval=interval,
                 limit=limit,
@@ -458,7 +461,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         symbol: str | None = None, limit: int = Query(300, ge=10, le=2_000)
     ) -> dict[str, Any]:
         resolved = resolve_symbol(symbol)
-        return await asyncio.to_thread(service.funding, resolved, limit=limit)
+        return await service.market_funding(resolved, limit=limit)
 
     @app.get("/api/overview", dependencies=guarded)
     async def overview(symbol: str | None = None) -> dict[str, Any]:

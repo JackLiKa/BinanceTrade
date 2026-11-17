@@ -19,17 +19,115 @@ CACHE_SECONDS = 3.0
 
 class LiveMarket:
     def __init__(
-        self, *, enabled: bool = True, proxy: str = "", failure_ttl: float = 60.0
+        self,
+        *,
+        enabled: bool = True,
+        proxy: str = "",
+        failure_ttl: float = 60.0,
+        node_url: str = "",
     ) -> None:
         self.enabled = enabled
         self.proxy = proxy or None
         self.failure_ttl = failure_ttl
+        # Tokyo execution node (WireGuard tunnel) can reach Binance even when this
+        # host cannot; when set it is the preferred market-data source.
+        self.node_url = (node_url or "").rstrip("/")
         self._client: httpx.AsyncClient | None = None
+        self._node_client: httpx.AsyncClient | None = None
         self._cache: dict[str, Any] | None = None
         self._cache_at = 0.0
         self._failure: dict[str, Any] | None = None
         self._failure_at = 0.0
+        self._candle_cache: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
         self._lock = asyncio.Lock()
+
+    @property
+    def node_enabled(self) -> bool:
+        return bool(self.node_url)
+
+    async def node_client(self) -> httpx.AsyncClient:
+        if self._node_client is None or self._node_client.is_closed:
+            self._node_client = httpx.AsyncClient(
+                base_url=self.node_url,
+                timeout=httpx.Timeout(8.0, connect=2.0),
+                headers={"User-Agent": "gridtrade/0.1 research-dashboard"},
+            )
+        return self._node_client
+
+    async def node_candles(
+        self, symbol: str, interval: str, limit: int
+    ) -> dict[str, Any] | None:
+        """K-lines from the tunnel node (real-time, ~55ms away). Cached for 2s."""
+        if not self.node_url:
+            return None
+        key = (symbol, interval, int(limit))
+        now = time.monotonic()
+        cached = self._candle_cache.get(key)
+        if cached is not None and now - cached[0] < 2.0:
+            return cached[1]
+        try:
+            client = await self.node_client()
+            response = await client.get(
+                "/market/candles",
+                params={"symbol": symbol, "interval": interval, "limit": limit},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:  # noqa: BLE001 - node optional
+            return None
+        if not isinstance(payload, dict) or not payload.get("candles"):
+            return None
+        payload["source"] = "node"
+        payload["fetched_at"] = round(time.time(), 3)
+        self._candle_cache[key] = (now, payload)
+        return payload
+
+    async def node_funding(self, symbol: str, limit: int = 300) -> dict[str, Any] | None:
+        if not self.node_url:
+            return None
+        try:
+            client = await self.node_client()
+            response = await client.get(
+                "/market/funding", params={"symbol": symbol, "limit": limit}
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:  # noqa: BLE001 - node optional
+            return None
+        if not isinstance(payload, dict) or not payload.get("funding"):
+            return None
+        payload["source"] = "node"
+        return payload
+
+    async def node_snapshot(self, symbol: str) -> dict[str, Any] | None:
+        if not self.node_url:
+            return None
+        try:
+            client = await self.node_client()
+            response = await client.get("/market/snapshot", params={"symbol": symbol})
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:  # noqa: BLE001 - node optional
+            return None
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            return None
+        return {
+            "symbol": symbol,
+            "mark_price": payload.get("mark_price"),
+            "index_price": payload.get("index_price"),
+            "last_price": payload.get("last_price"),
+            "change_24h_pct": payload.get("change_24h_pct"),
+            "high_24h": payload.get("high_24h"),
+            "low_24h": payload.get("low_24h"),
+            "volume_24h": payload.get("volume_24h"),
+            "quote_volume_24h": payload.get("quote_volume_24h"),
+            "last_funding_rate": payload.get("last_funding_rate"),
+            "next_funding_time": _iso_ms(payload.get("next_funding_time")),
+            "exchange_time": _iso_ms(payload.get("exchange_time")),
+            "source": "node",
+            "updated_at": round(time.time(), 3),
+            "error": None,
+        }
 
     async def client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -66,6 +164,9 @@ class LiveMarket:
 
     async def snapshot(self, symbol: str) -> dict[str, Any]:
         if not self.enabled:
+            node = await self.node_snapshot(symbol)
+            if node is not None:
+                return node
             return self._offline(symbol, "live market disabled")
         async with self._lock:
             now = time.monotonic()
@@ -77,12 +178,16 @@ class LiveMarket:
                 snapshot = await self._fetch(symbol)
             except Exception as exc:  # exchange unreachable: fail fast and cache it
                 snapshot = self._offline(symbol, str(exc)[:200])
-                self._failure = snapshot
-                self._failure_at = now
-                return snapshot
-            if snapshot.get("source") == "binance":
+            if snapshot.get("source") == "offline" and self.node_enabled:
+                node = await self.node_snapshot(symbol)
+                if node is not None:
+                    snapshot = node
+            if snapshot.get("source") in {"binance", "node"}:
                 self._cache = snapshot
                 self._cache_at = now
+                return snapshot
+            self._failure = snapshot
+            self._failure_at = now
             return snapshot
 
     async def _fetch(self, symbol: str) -> dict[str, Any]:

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -45,6 +46,13 @@ _reconciler: Reconciler | None = None
 def _client() -> BinanceDemoClient:
     cfg = BinanceDemoConfig.from_env()
     return BinanceDemoClient(cfg)
+
+
+def _num(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _recon() -> Reconciler | None:
@@ -124,6 +132,99 @@ class Handler(BaseHTTPRequestHandler):
                             "ok": True,
                             "open": list(opened.values()),
                             "total": len(recon.ledger.all_entries()),
+                        },
+                    )
+                    return
+                if route == "/market/candles":
+                    sym = (symbol or "BTCUSDT").upper()
+                    interval = str((query.get("interval") or ["1m"])[0])
+                    limit = max(1, min(1500, int((query.get("limit") or ["500"])[0])))
+                    raw = client._request(  # public market data
+                        "GET",
+                        "/fapi/v1/klines",
+                        {"symbol": sym, "interval": interval, "limit": limit},
+                    )
+                    points = [
+                        [
+                            int(row[0]) // 1000 if row[0] > 1e11 else int(row[0]),
+                            float(row[1]),
+                            float(row[2]),
+                            float(row[3]),
+                            float(row[4]),
+                            float(row[5]),
+                        ]
+                        for row in (raw or [])
+                        if isinstance(row, (list, tuple)) and len(row) >= 6
+                    ]
+                    self._send(
+                        HTTPStatus.OK,
+                        {
+                            "ok": True,
+                            "symbol": sym,
+                            "interval": interval,
+                            "count": len(points),
+                            "from": points[0][0] if points else None,
+                            "to": points[-1][0] if points else None,
+                            "candles": points,
+                            "source": "node",
+                        },
+                    )
+                    return
+                if route == "/market/funding":
+                    sym = (symbol or "BTCUSDT").upper()
+                    limit = max(1, min(1000, int((query.get("limit") or ["300"])[0])))
+                    raw = client._request(  # public market data
+                        "GET",
+                        "/fapi/v1/fundingRate",
+                        {"symbol": sym, "limit": limit},
+                    )
+                    points = [
+                        [
+                            int(row.get("fundingTime", 0)) // 1000,
+                            float(row.get("fundingRate") or 0.0),
+                            float(row["markPrice"]) if row.get("markPrice") not in (None, "") else None,
+                        ]
+                        for row in (raw or [])
+                        if isinstance(row, dict)
+                    ]
+                    self._send(
+                        HTTPStatus.OK,
+                        {
+                            "ok": True,
+                            "symbol": sym,
+                            "count": len(points),
+                            "funding": points,
+                            "source": "node",
+                        },
+                    )
+                    return
+                if route == "/market/snapshot":
+                    sym = (symbol or "BTCUSDT").upper()
+                    now_ms = int(time.time() * 1000)
+                    premium = client._request(
+                        "GET", "/fapi/v1/premiumIndex", {"symbol": sym}
+                    )
+                    ticker = client._request(
+                        "GET", "/fapi/v1/ticker/24hr", {"symbol": sym}
+                    )
+                    self._send(
+                        HTTPStatus.OK,
+                        {
+                            "ok": True,
+                            "symbol": sym,
+                            "mark_price": _num(premium.get("markPrice")),
+                            "index_price": _num(premium.get("indexPrice")),
+                            "last_price": _num(ticker.get("lastPrice")),
+                            "change_24h_pct": _num(ticker.get("priceChangePercent")),
+                            "high_24h": _num(ticker.get("highPrice")),
+                            "low_24h": _num(ticker.get("lowPrice")),
+                            "volume_24h": _num(ticker.get("volume")),
+                            "quote_volume_24h": _num(ticker.get("quoteVolume")),
+                            "last_funding_rate": _num(premium.get("lastFundingRate")),
+                            "next_funding_time": premium.get("nextFundingTime"),
+                            "exchange_time": premium.get("time"),
+                            "fetched_at": now_ms,
+                            "source": "node",
                         },
                     )
                     return
