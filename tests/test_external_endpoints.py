@@ -1,0 +1,73 @@
+"""Every external endpoint used by the app must be an official, documented one.
+
+The allowlist below mirrors ``docs/memory/07-外部接口清单与官方文档对照.md``.
+Adding a new exchange call without registering it here (and in that document)
+fails the suite, so "use the official API" stays enforced instead of aspirational.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# path -> official documentation reference
+BINANCE_FAPI = {
+    "/fapi/v1/premiumIndex": "Binance USDⓈ-M Futures · Mark Price",
+    "/fapi/v1/ticker/24hr": "Binance USDⓈ-M Futures · 24hr Ticker Price Change Statistics",
+    "/fapi/v1/klines": "Binance USDⓈ-M Futures · Kline Candlestick Data",
+    "/fapi/v1/fundingRate": "Binance USDⓈ-M Futures · Get Funding Rate History",
+    "/fapi/v1/exchangeInfo": "Binance USDⓈ-M Futures · Exchange Information",
+    "/fapi/v1/fundingInfo": "Binance USDⓈ-M Futures · Get Funding Rate Info",
+    "/fapi/v1/tradingSchedule": "Binance USDⓈ-M Futures · Trading Schedule",
+}
+
+GATE_FUTURES = {
+    "/futures/{settle}/contracts/{contract}": "Gate API v4 · Futures · Get a single contract",
+    "/futures/{settle}/contracts": "Gate API v4 · Futures · Get contracts",
+    "/futures/{settle}/tickers": "Gate API v4 · Futures · Get tickers",
+    "/futures/{settle}/funding_rate": "Gate API v4 · Futures · Get funding rate history",
+}
+
+ALLOWED_HOSTS = {"fapi.binance.com", "api.gateio.ws"}
+
+SOURCE_FILES = [
+    ROOT / "src/gridtrade/api/live.py",
+    ROOT / "src/gridtrade/api/paper.py",
+    ROOT / "research/fetch.py",
+]
+
+
+def _normalize(path: str) -> str:
+    path = re.sub(r"\{[^}]+\}", "{x}", path)
+    path = path.replace("/futures/usdt/", "/futures/{settle}/")
+    path = re.sub(r"(/contracts/)\{x\}", r"\1{contract}", path)
+    return path
+
+
+def _paths(text: str) -> set[str]:
+    return {
+        _normalize(match.group(1))
+        for match in re.finditer(r'"(/fapi/[^"]+|/futures/[^"]+)"', text)
+    }
+
+
+def test_every_external_endpoint_is_documented() -> None:
+    documented = set(BINANCE_FAPI) | set(GATE_FUTURES)
+    seen: set[str] = set()
+    for file in SOURCE_FILES:
+        text = file.read_text(encoding="utf-8")
+        seen |= _paths(text)
+    assert seen, "expected at least one external endpoint in the source"
+    undocumented = seen - documented
+    assert not undocumented, f"undocumented external endpoints: {sorted(undocumented)}"
+
+
+def test_only_known_exchange_hosts_are_used() -> None:
+    hosts: set[str] = set()
+    for file in SOURCE_FILES:
+        text = file.read_text(encoding="utf-8")
+        hosts |= set(re.findall(r'https?://([^"/\s]+)', text))
+    unexpected = hosts - ALLOWED_HOSTS
+    assert not unexpected, f"unexpected external hosts: {sorted(unexpected)}"

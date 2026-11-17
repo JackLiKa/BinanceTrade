@@ -226,6 +226,7 @@ cp apk/.env.example apk/.env
 - [测试手册](docs/memory/04-测试手册.md)（桌面 Web 与真机 APK 的可复现步骤）
 - [问题与决策记录](docs/memory/05-问题与决策记录.md)
 - [下一步与待办](docs/memory/06-下一步与待办.md)
+- [外部接口清单与官方文档对照](docs/memory/07-外部接口清单与官方文档对照.md)
 - [记忆库原始笔记](docs/memory/vault/)
 
 仓库不包含令牌（`var/token`）、行情数据（`research/data/`）、签名密钥（`apk/*.jks`）
@@ -234,7 +235,7 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 58 项
+.venv/bin/python -m pytest            # 61 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 
@@ -244,7 +245,8 @@ cd web && pnpm typecheck              # tsc --noEmit
   只读公开行情），`live` 没有适配器。任何时候都不会索取或保存交易所密钥。
 - 实时组合模拟盘使用 Gate.io USDT 永续公开行情与资金费率（服务器可访问），不连接任何
   私有接口、不下单；默认 `SKHY_USDT / SPCX_USDT / GOOGL_USDT / AMGN_USDT`，共享一个
-  保证金池，成交、手续费、资金费与组合权益写入 `var/paper.db`。
+  保证金池，成交、手续费（取自合约 `maker_fee_rate/taker_fee_rate`）、资金费与组合权益
+  写入 `var/paper.db`。所有外部接口见 [外部接口清单](docs/memory/07-外部接口清单与官方文档对照.md)。
 - 单用户、单进程。写入通过锁串行化；SQLite 使用 WAL 模式与短连接。
 - 行情快照走币安公共 REST，失败时降级为 `source: "offline"`，而不是阻塞界面。
 - 模拟成交使用分钟 K 线的最高/最低价；资金费率按记录的资金事件扣缴，

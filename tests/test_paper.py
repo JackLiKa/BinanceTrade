@@ -12,7 +12,8 @@ from gridtrade.api.paper import PaperEngine
 
 
 class FakeFeed:
-    def __init__(self) -> None:
+    def __init__(self, exchange_fees: bool = False) -> None:
+        self.exchange_fees = exchange_fees
         self.marks = {"AAA_USDT": 100.0, "BBB_USDT": 50.0}
         self.funding_rows: dict[str, list[dict[str, float | str]]] = {
             "AAA_USDT": [],
@@ -21,13 +22,17 @@ class FakeFeed:
         self.next_apply = int(time.time()) + 3_600
 
     def contract(self, symbol: str) -> dict[str, float | int | str]:
-        return {
+        data: dict[str, float | int | str] = {
             "order_price_round": "0.01",
             "quanto_multiplier": "0.01",
             "order_size_min": 1,
             "funding_next_apply": self.next_apply,
             "funding_interval": 28_800,
         }
+        if self.exchange_fees:
+            data["maker_fee_rate"] = "-0.0001"
+            data["taker_fee_rate"] = "0.0006"
+        return data
 
     def tickers(self, symbols: list[str]) -> list[dict[str, float | str]]:
         return [
@@ -59,7 +64,7 @@ def make_engine(tmp_path: Path, **config: object) -> tuple[PaperEngine, FakeFeed
         "symbols": ["AAA_USDT", "BBB_USDT"],
     }
     values.update(config)
-    feed = FakeFeed()
+    feed = FakeFeed(exchange_fees=bool(values.pop("exchange_fees", False)))
     engine = PaperEngine(PaperConfig(**values), tmp_path, feed=feed)
     engine.start(reset=True, background=False)
     return engine, feed
@@ -163,6 +168,24 @@ def test_portfolio_stop_flattens_all_and_persists(tmp_path: Path) -> None:
     assert reloaded.status == "halted"
     assert all(abs(state.position) <= 1e-9 for state in reloaded.state.values())
     assert reloaded.account.cash == pytest.approx(engine.account.cash)
+
+
+def test_exchange_fee_rates_are_used_when_available(tmp_path: Path) -> None:
+    engine, feed = make_engine(tmp_path, exchange_fees=True)
+    fee_state = engine.state["AAA_USDT"]
+    assert fee_state.maker_fee == pytest.approx(-0.0001)
+    assert fee_state.taker_fee == pytest.approx(0.0006)
+
+    feed.marks["AAA_USDT"] = 99.0
+    engine.tick()
+    rebate = 10 * 99 * -0.0001
+    assert engine.account.fees == pytest.approx(rebate)  # negative fee = rebate
+    assert engine.account.cash == pytest.approx(10_000 - rebate)
+
+    row = next(item for item in engine.snapshot()["portfolio"] if item["symbol"] == "AAA_USDT")
+    assert row["maker_fee_bp"] == pytest.approx(-1.0)
+    assert row["taker_fee_bp"] == pytest.approx(6.0)
+    assert row["fee_source"] == "exchange"
 
 
 def test_reset_reanchors_all_symbols(tmp_path: Path) -> None:

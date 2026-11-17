@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS paper_symbols (
     min_qty REAL NOT NULL DEFAULT 0.01,
     position REAL NOT NULL DEFAULT 0,
     avg_entry REAL NOT NULL DEFAULT 0,
+    maker_fee REAL,
+    taker_fee REAL,
     funding_next INTEGER,
     funding_interval INTEGER NOT NULL DEFAULT 28800
 );
@@ -109,6 +111,15 @@ def _float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _opt_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _floor_to(value: float, step: float) -> float:
@@ -181,6 +192,8 @@ class SymbolState:
     min_qty: float = 0.01
     position: float = 0.0
     avg_entry: float = 0.0
+    maker_fee: float | None = None
+    taker_fee: float | None = None
     funding_next: int | None = None
     funding_interval: int = 28_800
 
@@ -401,13 +414,23 @@ class PaperEngine:
                 return
             if not self._has_margin(state, price, qty):
                 return
-            self._fill(state, side, price, qty, self.config.maker_fee_bp / 1e4, "grid", now)
+            self._fill(state, side, price, qty, self._maker_rate(state), "grid", now)
 
     def _has_margin(self, state: SymbolState, price: float, qty: float) -> bool:
         """Shared margin: projected gross notional may not exceed equity * leverage."""
         cap = max(0.0, self.equity) * self.config.leverage
         projected = self.gross + abs(qty) * price
         return projected <= cap * 1.0001 + _EPS
+
+    def _maker_rate(self, state: SymbolState) -> float:
+        if state.maker_fee is not None:
+            return state.maker_fee
+        return self.config.maker_fee_bp / 1e4
+
+    def _taker_rate(self, state: SymbolState) -> float:
+        if state.taker_fee is not None:
+            return state.taker_fee
+        return self.config.taker_fee_bp / 1e4
 
     def _fill(
         self,
@@ -508,7 +531,7 @@ class PaperEngine:
             side = "SELL" if state.position > 0 else "BUY"
             qty = abs(state.position)
             price = _round_to(state.mark, state.tick_size)
-            self._fill(state, side, price, qty, self.config.taker_fee_bp / 1e4, "stop", time.time())
+            self._fill(state, side, price, qty, self._taker_rate(state), "stop", time.time())
         self.status = "halted"
         self.last_error = f"组合回撤触发 {limit:g}% 止损，已全部平仓并暂停"
         self._mark_equity()
@@ -560,6 +583,10 @@ class PaperEngine:
             unit = _floor_to(budget / mark, mult)
             if unit < min_qty:
                 unit = min_qty
+            maker_fee = taker_fee = None
+            if cfg.use_exchange_fees:
+                maker_fee = _opt_float(contract.get("maker_fee_rate"))
+                taker_fee = _opt_float(contract.get("taker_fee_rate"))
             change = row.get("change_percentage")
             states[symbol] = SymbolState(
                 symbol=symbol,
@@ -573,6 +600,8 @@ class PaperEngine:
                 tick_size=tick,
                 step_size=mult,
                 min_qty=min_qty,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
                 funding_next=int(contract.get("funding_next_apply") or 0) or None,
                 funding_interval=int(contract.get("funding_interval") or 28_800),
             )
@@ -609,6 +638,10 @@ class PaperEngine:
                 for table in ("paper_account", "paper_fills", "paper_equity", "paper_funding"):
                     conn.execute(f"DROP TABLE IF EXISTS {table}")
             conn.executescript(SCHEMA)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(paper_symbols)")}
+            for column in ("maker_fee", "taker_fee"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE paper_symbols ADD COLUMN {column} REAL")
             conn.commit()
 
     def _save(self) -> None:
@@ -643,13 +676,15 @@ class PaperEngine:
                 conn.execute(
                     "INSERT INTO paper_symbols (symbol, mark, index_price, change_pct, funding_rate,"
                     " anchor, step, unit, tick_size, step_size, min_qty, position, avg_entry,"
-                    " funding_next, funding_interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    " maker_fee, taker_fee, funding_next, funding_interval)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                     " ON CONFLICT(symbol) DO UPDATE SET mark=excluded.mark,"
                     " index_price=excluded.index_price, change_pct=excluded.change_pct,"
                     " funding_rate=excluded.funding_rate, anchor=excluded.anchor, step=excluded.step,"
                     " unit=excluded.unit, tick_size=excluded.tick_size, step_size=excluded.step_size,"
                     " min_qty=excluded.min_qty, position=excluded.position,"
-                    " avg_entry=excluded.avg_entry, funding_next=excluded.funding_next,"
+                    " avg_entry=excluded.avg_entry, maker_fee=excluded.maker_fee,"
+                    " taker_fee=excluded.taker_fee, funding_next=excluded.funding_next,"
                     " funding_interval=excluded.funding_interval",
                     (
                         state.symbol,
@@ -665,6 +700,8 @@ class PaperEngine:
                         state.min_qty,
                         state.position,
                         state.avg_entry,
+                        state.maker_fee,
+                        state.taker_fee,
                         state.funding_next,
                         state.funding_interval,
                     ),
@@ -720,6 +757,8 @@ class PaperEngine:
                 min_qty=symbol_row["min_qty"],
                 position=symbol_row["position"],
                 avg_entry=symbol_row["avg_entry"],
+                maker_fee=symbol_row["maker_fee"],
+                taker_fee=symbol_row["taker_fee"],
                 funding_next=symbol_row["funding_next"],
                 funding_interval=symbol_row["funding_interval"],
             )
@@ -758,6 +797,9 @@ class PaperEngine:
                         "buy_price": buy,
                         "sell_price": sell,
                         "max_position": state.unit * self.config.levels,
+                        "maker_fee_bp": (state.maker_fee if state.maker_fee is not None else self.config.maker_fee_bp / 1e4) * 1e4,
+                        "taker_fee_bp": (state.taker_fee if state.taker_fee is not None else self.config.taker_fee_bp / 1e4) * 1e4,
+                        "fee_source": "exchange" if state.maker_fee is not None else "config",
                     }
                 )
             with self._connect() as conn:

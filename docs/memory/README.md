@@ -5,7 +5,8 @@
 - 代码仓库：<https://github.com/JackLiKa/BinanceTrade>
 - 当前提交：以 `git log -1` 为准（本文档首次提交为 `7a0a604`）
 - 在线实例：`http://81.71.71.131:8000`（**明文 HTTP，临时**；令牌在服务器 `var/token`）
-- 实时组合模拟盘：`#/paper`，4 标的共享保证金，数据源 Gate 永续，配置在服务器 `.env`，状态在 `var/paper.db`
+- 实时组合模拟盘：`#/paper`，4 标的共享保证金，数据源 Gate 永续公开接口，费率取自合约；配置在服务器 `.env`，状态在 `var/paper.db`
+- 外部接口：见 07，`tests/test_external_endpoints.py` 强制只允许官方且已登记的接口
 - 文档更新时间：2026-11-17（Asia/Macau）
 - 本地开发目录：`/Users/user/Dev/bnapi`
 
@@ -17,6 +18,7 @@
 4. [04 测试手册](04-测试手册.md)：桌面 Web 与真机 APK 的可复现测试步骤和易误判点。
 5. [05 问题与决策记录](05-问题与决策记录.md)：修过的缺陷、已知限制、策略研究结论、关键设计取舍。
 6. [06 下一步与待办](06-下一步与待办.md)：按优先级排列的剩余工作。
+7. [07 外部接口清单与官方文档对照](07-外部接口清单与官方文档对照.md)：所有交易所接口的官方文档与自动校验。
 7. [vault/](vault/)：DSH 记忆库的原始笔记（含自动捕获的会话记录），内容未改写。
 
 ## 换电脑后的最小恢复步骤
@@ -63,6 +65,7 @@ var/                    # 运行期 SQLite、令牌（被忽略）
 - [项目交接总览（主文档）](vault/gridtrade-项目交接总览-2026-11-16.md)
 - [实时模拟盘与 APK 免登录（2026-11-17）](vault/gridtrade-实时模拟盘与-apk-免登录-2026-11-17.md)
 - [四标的共享保证金组合模拟盘（2026-11-17）](vault/gridtrade-四标的共享保证金组合模拟盘-2026-11-17.md)
+- [外部接口审计与手续费来源（2026-11-17）](vault/gridtrade-外部接口审计与手续费来源-2026-11-17.md)
 - [真机测试结论与修复](vault/gridtrade-web-apk-真机测试结论与修复-2026-11-16.md)
 - [中文化完成](vault/gridtrade-panel-中文化完成-ui-readme.md)
 - [移动端 WebView 布局与验收](vault/gridtrade-panel-mobile-webview-layout-fixes-and-acceptance-setup.md)

@@ -177,6 +177,9 @@ export interface PaperSymbolView {
   buy_price: number
   sell_price: number
   max_position: number
+  maker_fee_bp: number
+  taker_fee_bp: number
+  fee_source: 'exchange' | 'config'
 }
 
 export interface PaperState {

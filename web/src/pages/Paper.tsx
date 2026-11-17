@@ -130,9 +130,8 @@ export function Paper() {
               {data.config.enabled ? null : <Badge tone="warn">未在 .env 启用</Badge>}
             </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
-              共享保证金组合：每个标的独立网格，合并计算权益、手续费与资金费
-              （maker {data.config.maker_fee_bp}bp / taker {data.config.taker_fee_bp}bp，
-              每 {data.config.poll_seconds}s 轮询）。
+              共享保证金组合：每个标的独立网格，合并计算权益、手续费与资金费。
+              费率优先取自 Gate 合约公开字段，缺失时才回退到配置值；每 {data.config.poll_seconds}s 轮询。
             </p>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {data.symbols.map((symbol) => (
@@ -229,12 +228,13 @@ export function Paper() {
                 <th className="py-2 text-right font-medium">均价</th>
                 <th className="py-2 text-right font-medium">未实现</th>
                 <th className="py-2 text-right font-medium">买 / 卖</th>
+                <th className="py-2 text-right font-medium">费率(m/t)</th>
                 <th className="py-2 pr-5 text-right font-medium">名义</th>
               </tr>
             </thead>
             <tbody>
               {data.portfolio.length === 0 ? (
-                <tr><td colSpan={9} className="px-5 py-8 text-center text-[12px] text-muted">暂无标的</td></tr>
+                <tr><td colSpan={10} className="px-5 py-8 text-center text-[12px] text-muted">暂无标的</td></tr>
               ) : (
                 data.portfolio.map((row) => (
                   <tr key={row.symbol} className="border-t border-line-soft">
@@ -253,6 +253,10 @@ export function Paper() {
                     </td>
                     <td className="py-2 text-right font-mono text-[10.5px] text-muted">
                       {fmtPrice(row.buy_price)} / {fmtPrice(row.sell_price)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-[10.5px] text-muted">
+                      {Number(row.maker_fee_bp.toFixed(4))}/{Number(row.taker_fee_bp.toFixed(4))}bp
+                      <span className="ml-1 text-[9px] uppercase text-faint">{row.fee_source === 'exchange' ? '合约' : '配置'}</span>
                     </td>
                     <td className="py-2 pr-5 text-right font-mono tabular-nums">{fmtMoney(row.notional, 0)}</td>
                   </tr>
@@ -300,10 +304,10 @@ export function Paper() {
           <Field label="止损回撤" hint="% · 0 关闭">
             <NumberInput value={form.stop_dd_pct} onChange={patch('stop_dd_pct')} min={0} suffix="%" />
           </Field>
-          <Field label="挂单费率" hint="maker bp">
+          <Field label="挂单费率" hint="maker bp · 回退值">
             <NumberInput value={form.maker_fee_bp} onChange={patch('maker_fee_bp')} min={0} suffix="bp" />
           </Field>
-          <Field label="吃单费率" hint="taker bp">
+          <Field label="吃单费率" hint="taker bp · 回退值">
             <NumberInput value={form.taker_fee_bp} onChange={patch('taker_fee_bp')} min={0} suffix="bp" />
           </Field>
           <Field label="轮询间隔" hint="秒">
