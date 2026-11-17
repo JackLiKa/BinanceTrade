@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity, Play, RotateCcw, Square, Wallet } from 'lucide-react'
+import { Play, RotateCcw, Square } from 'lucide-react'
 import { api, type PaperConfigInput, type PaperState } from '../api'
 import { EquityChart } from '../components/charts'
 import { NumberInput } from '../components/inputs'
@@ -28,7 +28,7 @@ interface Form {
 const DEFAULTS: Form = {
   capital: 10_000,
   leverage: 2,
-  spacing_bp: 60,
+  spacing_bp: 10,
   levels: 20,
   stop_dd_pct: 10,
   maker_fee_bp: 2,
@@ -94,8 +94,7 @@ export function Paper() {
       '模拟盘已启动',
     )
   const stop = () => run('stop', () => api.paperStop(), '模拟盘已停止')
-  const reset = () =>
-    run('reset', () => api.paperReset(configPayload()), '模拟盘账户已重置')
+  const reset = () => run('reset', () => api.paperReset(configPayload()), '模拟盘账户已重置')
 
   if (state.error && !data) {
     return (
@@ -116,7 +115,6 @@ export function Paper() {
   }
 
   const account = data.account
-  const grid = data.grid
   const running = data.status === 'running'
   const points = equityPoints(data)
 
@@ -126,15 +124,26 @@ export function Paper() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-[13px] font-semibold text-ink">实时模拟盘</h2>
+              <h2 className="text-[13px] font-semibold text-ink">实时组合模拟盘</h2>
               <Badge tone={STATUS[data.status].tone}>{STATUS[data.status].label}</Badge>
-              <Badge tone="info">{data.symbol} · Gate 永续</Badge>
+              <Badge tone="info">{data.symbols.length} 标的 · Gate 永续</Badge>
               {data.config.enabled ? null : <Badge tone="warn">未在 .env 启用</Badge>}
             </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
-              网格纸面成交：maker {data.config.maker_fee_bp}bp / taker {data.config.taker_fee_bp}bp，
-              资金费按合约结算周期扣缴，行情每 {data.config.poll_seconds}s 轮询。
+              共享保证金组合：每个标的独立网格，合并计算权益、手续费与资金费
+              （maker {data.config.maker_fee_bp}bp / taker {data.config.taker_fee_bp}bp，
+              每 {data.config.poll_seconds}s 轮询）。
             </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {data.symbols.map((symbol) => (
+                <span
+                  key={symbol}
+                  className="rounded border border-line bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-muted"
+                >
+                  {symbol}
+                </span>
+              ))}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -146,13 +155,7 @@ export function Paper() {
             >
               <Play size={13} /> 启动
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              loading={busy === 'stop'}
-              disabled={!running}
-              onClick={stop}
-            >
+            <Button size="sm" variant="outline" loading={busy === 'stop'} disabled={!running} onClick={stop}>
               <Square size={13} /> 停止
             </Button>
             <Button
@@ -176,74 +179,93 @@ export function Paper() {
 
         <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 border-t border-line-soft pt-4 sm:grid-cols-4">
           <Stat
-            label="标记价格"
-            value={fmtPrice(data.mark_price)}
-            sub={`指数 ${fmtPrice(data.index_price)}`}
-            tone={data.change_24h_pct ?? undefined}
-          />
-          <Stat
-            label="资金费率"
-            value={fmtPct(data.funding_rate * 100, 4)}
-            sub={data.next_funding_time ? `下次结算 ${fmtTime(data.next_funding_time)}` : '—'}
-          />
-          <Stat
             label="账户权益"
             value={`$${fmtMoney(account.equity, 2)}`}
             sub={`现金 $${fmtMoney(account.cash, 2)}`}
             tone={account.return_pct}
           />
           <Stat
-            label="持仓"
-            value={fmtQty(account.position)}
-            sub={account.position ? `均价 ${fmtPrice(account.avg_entry)}` : '空仓'}
-            tone={account.position}
+            label="组合收益"
+            value={fmtPct(account.return_pct)}
+            sub={`峰值 $${fmtMoney(account.peak_equity, 0)} · 回撤 ${fmtMoney(account.drawdown_pct, 2)}%`}
+            tone={account.return_pct}
+          />
+          <Stat
+            label="总名义 / 保证金"
+            value={`$${fmtMoney(account.gross_notional, 0)}`}
+            sub={`保证金 $${fmtMoney(account.margin_used, 2)} · ${account.leverage}x`}
+          />
+          <Stat
+            label="成本"
+            value={`$${fmtMoney(account.fees + account.funding, 3)}`}
+            sub={`手续费 ${fmtMoney(account.fees, 3)} · 资金费 ${fmtMoney(account.funding, 3)}`}
           />
         </div>
         {data.last_error ? <div className="mt-3"><ErrorNote>{data.last_error}</ErrorNote></div> : null}
         {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHead
-            title="收益与成本"
-            hint={`数据源 ${data.last_tick_at ? `更新于 ${timeAgo(data.last_tick_at)}` : '等待行情'}`}
-            right={<Badge tone="neutral">{data.status === 'running' ? '实时' : '暂停'}</Badge>}
-          />
-          <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3">
-            <Stat label="未实现" value={`$${fmtMoney(account.unrealized, 2)}`} tone={account.unrealized} />
-            <Stat label="已实现" value={`$${fmtMoney(account.realized, 2)}`} tone={account.realized} />
-            <Stat label="累计收益" value={fmtPct(account.return_pct)} tone={account.return_pct} />
-            <Stat label="手续费" value={`$${fmtMoney(account.fees, 3)}`} />
-            <Stat label="资金费" value={`$${fmtMoney(account.funding, 3)}`} />
-            <Stat label="最大回撤" value={`${fmtMoney(account.drawdown_pct, 2)}%`} tone={-account.drawdown_pct} />
-          </div>
-        </Card>
-
-        <Card>
-          <CardHead
-            title="网格"
-            hint="相邻格各挂一单；价格触达挂单价即按该价成交，收入计入手续费与已实现盈亏。"
-            right={<Badge tone="accent">{grid.level} 层</Badge>}
-          />
-          <div className="grid grid-cols-2 gap-x-5 gap-y-4">
-            <Stat label="锚点" value={fmtPrice(grid.anchor)} />
-            <Stat label="单格步长" value={fmtPrice(grid.step)} />
-            <Stat label="每格数量" value={fmtQty(grid.unit)} />
-            <Stat label="最大持仓" value={fmtQty(grid.max_position)} />
-            <Stat label="买入价" value={fmtPrice(grid.buy_price)} />
-            <Stat label="卖出价" value={fmtPrice(grid.sell_price)} />
-          </div>
-        </Card>
-      </div>
-
       <Card pad={false}>
         <div className="px-5 pt-5">
           <CardHead
-            title="权益曲线"
-            hint="每 15 秒采样一次；重启后从 SQLite 恢复。"
-            right={<Badge tone="neutral">{points.length} 点</Badge>}
+            title="组合持仓与网格"
+            hint={`数据源 ${data.last_tick_at ? `更新于 ${timeAgo(data.last_tick_at)}` : '等待行情'}；每个标的按共享保证金上限约束开仓。`}
+            right={
+              <Badge tone="neutral">
+                未实现 ${fmtMoney(account.unrealized, 2)} · 已实现 ${fmtMoney(account.realized, 2)}
+              </Badge>
+            }
           />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-[11.5px]">
+            <thead>
+              <tr className="border-t border-line-soft text-left text-[10px] uppercase tracking-wider text-faint">
+                <th className="px-5 py-2 font-medium">标的</th>
+                <th className="py-2 text-right font-medium">标记价</th>
+                <th className="py-2 text-right font-medium">24h</th>
+                <th className="py-2 text-right font-medium">资金费率</th>
+                <th className="py-2 text-right font-medium">持仓</th>
+                <th className="py-2 text-right font-medium">均价</th>
+                <th className="py-2 text-right font-medium">未实现</th>
+                <th className="py-2 text-right font-medium">买 / 卖</th>
+                <th className="py-2 pr-5 text-right font-medium">名义</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.portfolio.length === 0 ? (
+                <tr><td colSpan={9} className="px-5 py-8 text-center text-[12px] text-muted">暂无标的</td></tr>
+              ) : (
+                data.portfolio.map((row) => (
+                  <tr key={row.symbol} className="border-t border-line-soft">
+                    <td className="px-5 py-2 font-mono text-[11px] text-ink">{row.symbol}</td>
+                    <td className="py-2 text-right font-mono tabular-nums">{fmtPrice(row.mark_price)}</td>
+                    <td className={cx('py-2 text-right font-mono tabular-nums', (row.change_24h_pct ?? 0) >= 0 ? 'text-up' : 'text-down')}>
+                      {fmtPct(row.change_24h_pct)}
+                    </td>
+                    <td className="py-2 text-right font-mono tabular-nums text-muted">{fmtPct(row.funding_rate * 100, 4, false)}</td>
+                    <td className={cx('py-2 text-right font-mono tabular-nums', row.position > 0 ? 'text-up' : row.position < 0 ? 'text-down' : 'text-muted')}>
+                      {fmtQty(row.position)}
+                    </td>
+                    <td className="py-2 text-right font-mono tabular-nums text-muted">{row.position ? fmtPrice(row.avg_entry) : '—'}</td>
+                    <td className={cx('py-2 text-right font-mono tabular-nums', row.unrealized >= 0 ? 'text-up' : 'text-down')}>
+                      {fmtMoney(row.unrealized, 3)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-[10.5px] text-muted">
+                      {fmtPrice(row.buy_price)} / {fmtPrice(row.sell_price)}
+                    </td>
+                    <td className="py-2 pr-5 text-right font-mono tabular-nums">{fmtMoney(row.notional, 0)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card pad={false}>
+        <div className="px-5 pt-5">
+          <CardHead title="组合权益曲线" hint="每 15 秒采样；重启后从 SQLite 恢复。" right={<Badge tone="neutral">{points.length} 点</Badge>} />
         </div>
         {points.length >= 2 ? (
           <div className="px-2 pb-2">
@@ -251,10 +273,7 @@ export function Paper() {
           </div>
         ) : (
           <div className="px-5 pb-5">
-            <Empty
-              title="还没有权益样本"
-              body="启动模拟盘后，行情轮询与成交会持续记录权益和持仓。"
-            />
+            <Empty title="还没有权益样本" body="启动模拟盘后，行情轮询与成交会持续记录组合权益。" />
           </div>
         )}
       </Card>
@@ -262,20 +281,20 @@ export function Paper() {
       <Card>
         <CardHead
           title="参数"
-          hint="修改后点“重置账户”生效（会清空成交与权益历史，并从当前标记价重新锚定）。"
-          right={<Badge tone="neutral">仅影响纸面账户</Badge>}
+          hint="修改后点“重置账户”生效（清空成交与权益历史，按当前标记价重新锚定全部标的）。标的列表由服务器 .env 的 GRIDTRADE_PAPER_SYMBOLS 控制。"
+          right={<Badge tone="neutral">共享保证金</Badge>}
         />
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Field label="本金" hint="USDT">
+          <Field label="组合本金" hint="USDT">
             <NumberInput value={form.capital} onChange={patch('capital')} min={100} suffix="$" />
           </Field>
-          <Field label="杠杆" hint="总名义 / 本金">
+          <Field label="组合杠杆" hint="总名义 / 权益">
             <NumberInput value={form.leverage} onChange={patch('leverage')} min={0.1} step={0.1} suffix="x" />
           </Field>
           <Field label="网格间距" hint="bp">
             <NumberInput value={form.spacing_bp} onChange={patch('spacing_bp')} min={1} suffix="bp" />
           </Field>
-          <Field label="层数" hint="单边最大格数">
+          <Field label="层数" hint="单标的单边最大格数">
             <NumberInput value={form.levels} onChange={patch('levels')} min={1} suffix="L" />
           </Field>
           <Field label="止损回撤" hint="% · 0 关闭">
@@ -296,13 +315,14 @@ export function Paper() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card pad={false}>
           <div className="px-5 pt-5">
-            <CardHead title="成交" hint="纸面成交，含手续费与已实现盈亏。" right={<Badge tone="neutral">{data.fills.length}</Badge>} />
+            <CardHead title="成交" hint="按标的记录纸面成交，含手续费与已实现盈亏。" right={<Badge tone="neutral">{data.fills.length}</Badge>} />
           </div>
-          <div className="max-h-[360px] overflow-auto">
-            <table className="w-full text-[11.5px]">
+          <div className="max-h-[380px] overflow-auto">
+            <table className="w-full min-w-[520px] text-[11.5px]">
               <thead className="sticky top-0 bg-panel">
                 <tr className="text-left text-[10px] uppercase tracking-wider text-faint">
                   <th className="px-5 py-2 font-medium">时间</th>
+                  <th className="py-2 font-medium">标的</th>
                   <th className="py-2 font-medium">方向</th>
                   <th className="py-2 text-right font-medium">价格</th>
                   <th className="py-2 text-right font-medium">数量</th>
@@ -312,11 +332,12 @@ export function Paper() {
               </thead>
               <tbody>
                 {data.fills.length === 0 ? (
-                  <tr><td colSpan={6} className="px-5 py-8 text-center text-[12px] text-muted">暂无成交</td></tr>
+                  <tr><td colSpan={7} className="px-5 py-8 text-center text-[12px] text-muted">暂无成交</td></tr>
                 ) : (
                   data.fills.map((fill) => (
                     <tr key={fill.id} className="border-t border-line-soft">
                       <td className="px-5 py-2 font-mono text-[10.5px] text-muted">{fmtTime(fill.ts)}</td>
+                      <td className="py-2 font-mono text-[10.5px] text-muted">{fill.symbol}</td>
                       <td className={cx('py-2 font-mono', fill.side === 'BUY' ? 'text-up' : 'text-down')}>{fill.side}</td>
                       <td className="py-2 text-right font-mono tabular-nums">{fmtPrice(fill.price)}</td>
                       <td className="py-2 text-right font-mono tabular-nums">{fmtQty(fill.qty)}</td>
@@ -334,13 +355,14 @@ export function Paper() {
 
         <Card pad={false}>
           <div className="px-5 pt-5">
-            <CardHead title="资金费" hint="按合约资金费结算；正数表示支出。" right={<Badge tone="neutral">{data.funding.length}</Badge>} />
+            <CardHead title="资金费" hint="按标的结算；正数表示支出。" right={<Badge tone="neutral">{data.funding.length}</Badge>} />
           </div>
-          <div className="max-h-[360px] overflow-auto">
-            <table className="w-full text-[11.5px]">
+          <div className="max-h-[380px] overflow-auto">
+            <table className="w-full min-w-[460px] text-[11.5px]">
               <thead className="sticky top-0 bg-panel">
                 <tr className="text-left text-[10px] uppercase tracking-wider text-faint">
                   <th className="px-5 py-2 font-medium">结算时间</th>
+                  <th className="py-2 font-medium">标的</th>
                   <th className="py-2 text-right font-medium">费率</th>
                   <th className="py-2 text-right font-medium">持仓</th>
                   <th className="py-2 pr-5 text-right font-medium">支付</th>
@@ -348,11 +370,12 @@ export function Paper() {
               </thead>
               <tbody>
                 {data.funding.length === 0 ? (
-                  <tr><td colSpan={4} className="px-5 py-8 text-center text-[12px] text-muted">暂无结算</td></tr>
+                  <tr><td colSpan={5} className="px-5 py-8 text-center text-[12px] text-muted">暂无结算</td></tr>
                 ) : (
                   data.funding.map((row) => (
                     <tr key={row.id} className="border-t border-line-soft">
                       <td className="px-5 py-2 font-mono text-[10.5px] text-muted">{fmtTime(row.ts)}</td>
+                      <td className="py-2 font-mono text-[10.5px] text-muted">{row.symbol}</td>
                       <td className="py-2 text-right font-mono tabular-nums">{fmtPct(row.rate * 100, 4, false)}</td>
                       <td className="py-2 text-right font-mono tabular-nums">{fmtQty(row.position)}</td>
                       <td className={cx('py-2 pr-5 text-right font-mono tabular-nums', row.payment > 0 ? 'text-down' : 'text-up')}>
@@ -368,8 +391,8 @@ export function Paper() {
       </div>
 
       <p className="px-1 text-[10.5px] leading-relaxed text-faint">
-        模拟盘不连接任何交易所私有接口，不会下单；仅使用公开行情与资金费数据。收益、持仓、手续费与资金费均落库到
-        <span className="font-mono"> var/paper.db</span>，服务重启后自动恢复。
+        组合模拟盘不连接任何交易所私有接口，不会下单；仅使用公开行情与资金费数据。共享一个保证金池，
+        成交、手续费、资金费与组合权益落库到 <span className="font-mono">var/paper.db</span>，服务重启后自动恢复。
       </p>
     </div>
   )

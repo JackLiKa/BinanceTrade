@@ -1,10 +1,10 @@
-"""Real-time paper trading for a single inventory grid.
+"""Real-time paper trading for a multi-symbol inventory grid portfolio.
 
 Market data comes from Gate.io USDT-margined perpetual futures (public REST,
-reachable from the cloud host where Binance futures is blocked). The engine
-polls the mark price, fills resting grid orders at their limit price, charges
-maker/taker fees, settles funding at the contract's funding interval, and keeps
-account/fills/equity/funding history in SQLite so a restart resumes the account.
+reachable from the cloud host where Binance futures is blocked). One shared
+account holds cash, fees, funding and equity; every symbol runs its own grid but
+all of them consume the same margin pool. Funding is settled per symbol at the
+contract's funding interval and fees are charged per fill.
 
 The engine deliberately has no exchange credentials: it never places an order.
 """
@@ -33,27 +33,39 @@ CREATE TABLE IF NOT EXISTS paper_account (
     status TEXT NOT NULL,
     config TEXT NOT NULL,
     cash REAL NOT NULL,
-    position REAL NOT NULL,
-    avg_entry REAL NOT NULL,
-    peak_equity REAL NOT NULL,
     realized REAL NOT NULL DEFAULT 0,
     fees REAL NOT NULL DEFAULT 0,
     funding REAL NOT NULL DEFAULT 0,
-    anchor REAL NOT NULL DEFAULT 0,
-    step REAL NOT NULL DEFAULT 0,
-    unit REAL NOT NULL DEFAULT 0,
-    funding_next INTEGER,
-    funding_interval INTEGER NOT NULL DEFAULT 28800,
+    peak_equity REAL NOT NULL,
     started_at TEXT,
     updated_at TEXT,
     last_error TEXT,
+    equity REAL NOT NULL DEFAULT 0,
+    gross REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS paper_symbols (
+    symbol TEXT PRIMARY KEY,
     mark REAL NOT NULL DEFAULT 0,
-    equity REAL NOT NULL DEFAULT 0
+    index_price REAL NOT NULL DEFAULT 0,
+    change_pct REAL,
+    funding_rate REAL NOT NULL DEFAULT 0,
+    anchor REAL NOT NULL DEFAULT 0,
+    step REAL NOT NULL DEFAULT 0,
+    unit REAL NOT NULL DEFAULT 0,
+    tick_size REAL NOT NULL DEFAULT 0.01,
+    step_size REAL NOT NULL DEFAULT 0.01,
+    min_qty REAL NOT NULL DEFAULT 0.01,
+    position REAL NOT NULL DEFAULT 0,
+    avg_entry REAL NOT NULL DEFAULT 0,
+    funding_next INTEGER,
+    funding_interval INTEGER NOT NULL DEFAULT 28800
 );
 
 CREATE TABLE IF NOT EXISTS paper_fills (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
+    symbol TEXT NOT NULL,
     side TEXT NOT NULL,
     price REAL NOT NULL,
     qty REAL NOT NULL,
@@ -67,8 +79,7 @@ CREATE TABLE IF NOT EXISTS paper_equity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     equity REAL NOT NULL,
-    mark REAL NOT NULL,
-    position REAL NOT NULL,
+    gross REAL NOT NULL,
     drawdown REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS paper_equity_ts ON paper_equity(id DESC);
@@ -76,6 +87,7 @@ CREATE INDEX IF NOT EXISTS paper_equity_ts ON paper_equity(id DESC);
 CREATE TABLE IF NOT EXISTS paper_funding (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
+    symbol TEXT NOT NULL,
     rate REAL NOT NULL,
     payment REAL NOT NULL,
     position REAL NOT NULL,
@@ -112,11 +124,11 @@ def _round_to(value: float, step: float) -> float:
 
 
 class Feed(Protocol):
-    def contract(self) -> dict[str, Any]: ...
+    def contract(self, symbol: str) -> dict[str, Any]: ...
 
-    def ticker(self) -> dict[str, Any]: ...
+    def tickers(self, symbols: list[str]) -> list[dict[str, Any]]: ...
 
-    def funding(self, limit: int = 10) -> list[dict[str, Any]]: ...
+    def funding(self, symbol: str, limit: int = 10) -> list[dict[str, Any]]: ...
 
 
 class GateFeed:
@@ -124,31 +136,28 @@ class GateFeed:
 
     BASE = "https://api.gateio.ws/api/v4"
 
-    def __init__(self, symbol: str) -> None:
-        self.symbol = symbol
+    def __init__(self) -> None:
         self._client = httpx.Client(
             base_url=self.BASE,
-            timeout=httpx.Timeout(6.0, connect=4.0),
+            timeout=httpx.Timeout(8.0, connect=4.0),
             headers={"User-Agent": "gridtrade/0.1 paper"},
         )
 
-    def contract(self) -> dict[str, Any]:
-        response = self._client.get(f"/futures/usdt/contracts/{self.symbol}")
+    def contract(self, symbol: str) -> dict[str, Any]:
+        response = self._client.get(f"/futures/usdt/contracts/{symbol}")
         response.raise_for_status()
         return response.json()
 
-    def ticker(self) -> dict[str, Any]:
-        response = self._client.get("/futures/usdt/tickers", params={"contract": self.symbol})
+    def tickers(self, symbols: list[str]) -> list[dict[str, Any]]:
+        response = self._client.get("/futures/usdt/tickers")
         response.raise_for_status()
-        rows = response.json()
-        if not rows:
-            raise RuntimeError(f"no ticker for {self.symbol}")
-        return rows[0]
+        wanted = {name.upper() for name in symbols}
+        return [row for row in response.json() if str(row.get("contract", "")).upper() in wanted]
 
-    def funding(self, limit: int = 10) -> list[dict[str, Any]]:
+    def funding(self, symbol: str, limit: int = 10) -> list[dict[str, Any]]:
         response = self._client.get(
             "/futures/usdt/funding_rate",
-            params={"contract": self.symbol, "limit": limit},
+            params={"contract": symbol, "limit": limit},
         )
         response.raise_for_status()
         return response.json()
@@ -158,19 +167,46 @@ class GateFeed:
 
 
 @dataclass(slots=True)
-class PaperAccount:
-    cash: float
-    position: float = 0.0
-    avg_entry: float = 0.0
-    peak_equity: float = 0.0
-    realized: float = 0.0
-    fees: float = 0.0
-    funding: float = 0.0
+class SymbolState:
+    symbol: str
+    mark: float = 0.0
+    index_price: float = 0.0
+    change_pct: float | None = None
+    funding_rate: float = 0.0
     anchor: float = 0.0
     step: float = 0.0
     unit: float = 0.0
+    tick_size: float = 0.01
+    step_size: float = 0.01
+    min_qty: float = 0.01
+    position: float = 0.0
+    avg_entry: float = 0.0
     funding_next: int | None = None
     funding_interval: int = 28_800
+
+    def grid(self) -> tuple[float, float]:
+        if self.unit <= 0:
+            return self.mark, self.mark
+        level = int(round(-self.position / self.unit))
+        return (
+            _round_to(self.anchor + (level - 1) * self.step, self.tick_size),
+            _round_to(self.anchor + (level + 1) * self.step, self.tick_size),
+        )
+
+    @property
+    def unrealized(self) -> float:
+        if not self.position:
+            return 0.0
+        return self.position * (self.mark - self.avg_entry)
+
+
+@dataclass(slots=True)
+class PortfolioAccount:
+    cash: float
+    realized: float = 0.0
+    fees: float = 0.0
+    funding: float = 0.0
+    peak_equity: float = 0.0
 
 
 class PaperEngine:
@@ -191,20 +227,14 @@ class PaperEngine:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_snapshot = 0.0
-        self._last_contract = 0.0
-        self.mark = 0.0
-        self.index_price = 0.0
-        self.change_24h_pct: float | None = None
-        self.funding_rate = 0.0
-        self.tick_tick = 0.0
+        self.account = PortfolioAccount(cash=config.capital)
+        self.state: dict[str, SymbolState] = {}
+        self.status = "stopped"
+        self.started_at: str | None = None
         self.last_tick_at: str | None = None
         self.last_error: str | None = None
-        self.status = "stopped"
-        self.account = PaperAccount(cash=config.capital)
-        self.tick_size = 0.01
-        self.step_size = 0.01
-        self.min_qty = 0.01
-        self.started_at: str | None = None
+        self.equity = config.capital
+        self.gross = 0.0
         self._init_db()
         self._load()
 
@@ -212,7 +242,7 @@ class PaperEngine:
 
     def feed(self) -> Feed:
         if self._feed is None:
-            self._feed = GateFeed(self.config.symbol)
+            self._feed = GateFeed()
         return self._feed
 
     def autostart(self) -> None:
@@ -249,7 +279,9 @@ class PaperEngine:
     ) -> dict[str, Any]:
         with self._lock:
             if overrides:
-                self.config = replace(self.config, **{k: v for k, v in overrides.items() if hasattr(self.config, k)})
+                self.config = replace(
+                    self.config, **{k: v for k, v in overrides.items() if hasattr(self.config, k)}
+                )
             if reset or not self.started_at:
                 self._open()
             self.status = "running"
@@ -292,7 +324,9 @@ class PaperEngine:
             self.stop()
         with self._lock:
             if overrides:
-                self.config = replace(self.config, **{k: v for k, v in overrides.items() if hasattr(self.config, k)})
+                self.config = replace(
+                    self.config, **{k: v for k, v in overrides.items() if hasattr(self.config, k)}
+                )
         self._open()
         with self._lock:
             self.status = "stopped"
@@ -328,103 +362,98 @@ class PaperEngine:
         with self._lock:
             if self.status != "running":
                 return
+            symbols = list(self.state)
             feed = self.feed()
-        ticker = feed.ticker()
+        rows = feed.tickers(symbols)
+        by_symbol = {str(row.get("contract", "")).upper(): row for row in rows}
         now = time.time()
         with self._lock:
-            self.mark = _float(ticker.get("mark_price"), self.mark)
-            self.index_price = _float(ticker.get("index_price"), self.index_price)
-            change = ticker.get("change_percentage")
-            self.change_24h_pct = _float(change) if change is not None else None
-            self.funding_rate = _float(ticker.get("funding_rate"), self.funding_rate)
+            for symbol, state in self.state.items():
+                row = by_symbol.get(symbol)
+                if not row:
+                    continue
+                state.mark = _float(row.get("mark_price"), state.mark)
+                state.index_price = _float(row.get("index_price"), state.index_price)
+                change = row.get("change_percentage")
+                state.change_pct = _float(change) if change is not None else None
+                state.funding_rate = _float(row.get("funding_rate"), state.funding_rate)
             self.last_tick_at = _iso(now)
-            self.tick_tick = now
-            self._match(now)
+            for state in self.state.values():
+                self._match(state, now)
+            self._mark_equity()
             self._settle_funding(now)
             self._mark_equity()
             self._check_stop()
             self._save()
             self._snapshot_if_due(now)
 
-    def _grid(self) -> tuple[float, float]:
-        account = self.account
-        unit = account.unit
-        if unit <= 0:
-            return self.mark, self.mark
-        level = int(round(-account.position / unit))
-        return (
-            _round_to(account.anchor + (level - 1) * account.step, self.tick_size),
-            _round_to(account.anchor + (level + 1) * account.step, self.tick_size),
-        )
-
-    def _match(self, now: float) -> None:
-        account = self.account
-        if account.unit <= 0 or self.mark <= 0:
+    def _match(self, state: SymbolState, now: float) -> None:
+        if state.unit <= 0 or state.mark <= 0:
             return
-        max_position = account.unit * self.config.levels
+        max_position = state.unit * self.config.levels
         for _ in range(_FILL_LIMIT):
-            buy, sell = self._grid()
-            if self.mark <= buy + _EPS and account.position + account.unit <= max_position + _EPS:
-                self._fill("BUY", buy, account.unit, self.config.maker_fee_bp / 1e4, "grid", now)
-            elif self.mark >= sell - _EPS and account.position - account.unit >= -max_position - _EPS:
-                self._fill("SELL", sell, account.unit, self.config.maker_fee_bp / 1e4, "grid", now)
+            buy, sell = state.grid()
+            if state.mark <= buy + _EPS and state.position + state.unit <= max_position + _EPS:
+                side, price, qty = "BUY", buy, state.unit
+            elif state.mark >= sell - _EPS and state.position - state.unit >= -max_position - _EPS:
+                side, price, qty = "SELL", sell, state.unit
             else:
                 return
+            if not self._has_margin(state, price, qty):
+                return
+            self._fill(state, side, price, qty, self.config.maker_fee_bp / 1e4, "grid", now)
 
-    def _fill(self, side: str, price: float, qty: float, fee_rate: float, reason: str, now: float) -> None:
+    def _has_margin(self, state: SymbolState, price: float, qty: float) -> bool:
+        """Shared margin: projected gross notional may not exceed equity * leverage."""
+        cap = max(0.0, self.equity) * self.config.leverage
+        projected = self.gross + abs(qty) * price
+        return projected <= cap * 1.0001 + _EPS
+
+    def _fill(
+        self,
+        state: SymbolState,
+        side: str,
+        price: float,
+        qty: float,
+        fee_rate: float,
+        reason: str,
+        now: float,
+    ) -> None:
         account = self.account
         signed = qty if side == "BUY" else -qty
         fee = abs(signed) * price * fee_rate
         account.cash -= fee
         account.fees += fee
         realized = 0.0
-        if abs(account.position) <= _EPS or (account.position > 0) == (signed > 0):
-            new_position = account.position + signed
+        if abs(state.position) <= _EPS or (state.position > 0) == (signed > 0):
+            new_position = state.position + signed
             if abs(new_position) > _EPS:
-                account.avg_entry = (
-                    abs(account.position) * account.avg_entry + abs(signed) * price
+                state.avg_entry = (
+                    abs(state.position) * state.avg_entry + abs(signed) * price
                 ) / abs(new_position)
-            account.position = new_position
+            state.position = new_position
         else:
-            closed = min(abs(signed), abs(account.position))
-            realized = closed * (price - account.avg_entry) * (1 if account.position > 0 else -1)
+            closed = min(abs(signed), abs(state.position))
+            realized = closed * (price - state.avg_entry) * (1 if state.position > 0 else -1)
             account.cash += realized
             account.realized += realized
-            new_position = account.position + signed
+            new_position = state.position + signed
             if abs(new_position) <= _EPS:
-                account.avg_entry = 0.0
-            elif (new_position > 0) != (account.position > 0):
-                account.avg_entry = price
-            account.position = new_position
+                state.avg_entry = 0.0
+            elif (new_position > 0) != (state.position > 0):
+                state.avg_entry = price
+            state.position = new_position
+        self.gross = self._gross()
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO paper_fills (ts, side, price, qty, fee, realized, reason)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (_iso(now), side, price, round(qty, 12), fee, realized, reason),
+                "INSERT INTO paper_fills (ts, symbol, side, price, qty, fee, realized, reason)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (_iso(now), state.symbol, side, price, round(qty, 12), fee, realized, reason),
             )
 
-    def _settle_funding(self, now: float) -> None:
-        account = self.account
-        next_apply = account.funding_next
-        if not next_apply or now < next_apply:
-            return
-        rate = self._funding_rate_at(next_apply)
-        if rate is None:
-            rate = self.funding_rate
-        payment = account.position * self.mark * rate
-        account.cash -= payment
-        account.funding += payment
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO paper_funding (ts, rate, payment, position, mark) VALUES (?, ?, ?, ?, ?)",
-                (_iso(next_apply), rate, payment, account.position, self.mark),
-            )
-        account.funding_next = int(next_apply + account.funding_interval)
-        self.last_error = None
-
-    def _funding_rate_at(self, ts: int) -> float | None:
+    def _funding_rate_at(self, symbol: str, ts: int) -> float | None:
         try:
-            rows = self.feed().funding(limit=10)
+            rows = self.feed().funding(symbol, limit=10)
         except Exception:
             return None
         best: tuple[float, float] | None = None
@@ -437,27 +466,51 @@ class PaperEngine:
                 best = (distance, _float(row.get("r")))
         return best[1] if best else None
 
+    def _settle_funding(self, now: float) -> None:
+        for state in self.state.values():
+            next_apply = state.funding_next
+            if not next_apply or now < next_apply:
+                continue
+            rate = self._funding_rate_at(state.symbol, next_apply)
+            if rate is None:
+                rate = state.funding_rate
+            payment = state.position * state.mark * rate
+            self.account.cash -= payment
+            self.account.funding += payment
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO paper_funding (ts, symbol, rate, payment, position, mark)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (_iso(next_apply), state.symbol, rate, payment, state.position, state.mark),
+                )
+            state.funding_next = int(next_apply + state.funding_interval)
+
+    def _gross(self) -> float:
+        return sum(abs(state.position) * state.mark for state in self.state.values())
+
     def _mark_equity(self) -> None:
-        account = self.account
-        unrealized = account.position * (self.mark - account.avg_entry) if account.position else 0.0
-        equity = account.cash + unrealized
-        account.peak_equity = max(account.peak_equity, equity)
-        self.equity = equity
+        unrealized = sum(state.unrealized for state in self.state.values())
+        self.gross = self._gross()
+        self.equity = self.account.cash + unrealized
+        self.account.peak_equity = max(self.account.peak_equity, self.equity)
 
     def _check_stop(self) -> None:
-        account = self.account
         limit = self.config.stop_dd_pct
-        if limit <= 0 or account.peak_equity <= 0 or abs(account.position) <= _EPS:
+        account = self.account
+        if limit <= 0 or account.peak_equity <= 0:
             return
         drawdown = (account.peak_equity - self.equity) / account.peak_equity * 100
         if drawdown < limit:
             return
-        side = "SELL" if account.position > 0 else "BUY"
-        qty = abs(account.position)
-        price = _round_to(self.mark, self.tick_size)
-        self._fill(side, price, qty, self.config.taker_fee_bp / 1e4, "stop", time.time())
+        for state in self.state.values():
+            if abs(state.position) <= _EPS:
+                continue
+            side = "SELL" if state.position > 0 else "BUY"
+            qty = abs(state.position)
+            price = _round_to(state.mark, state.tick_size)
+            self._fill(state, side, price, qty, self.config.taker_fee_bp / 1e4, "stop", time.time())
         self.status = "halted"
-        self.last_error = f"触发 {limit:g}% 止损，已平仓并暂停"
+        self.last_error = f"组合回撤触发 {limit:g}% 止损，已全部平仓并暂停"
         self._mark_equity()
         self._stop.set()
 
@@ -470,8 +523,8 @@ class PaperEngine:
             drawdown = (self.account.peak_equity - self.equity) / self.account.peak_equity * 100
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO paper_equity (ts, equity, mark, position, drawdown) VALUES (?, ?, ?, ?, ?)",
-                (_iso(now), self.equity, self.mark, self.account.position, drawdown),
+                "INSERT INTO paper_equity (ts, equity, gross, drawdown) VALUES (?, ?, ?, ?)",
+                (_iso(now), self.equity, self.gross, drawdown),
             )
             conn.execute(
                 "DELETE FROM paper_equity WHERE id <= (SELECT MAX(id) - 20000 FROM paper_equity)"
@@ -481,36 +534,52 @@ class PaperEngine:
 
     def _open(self) -> None:
         feed = self.feed()
-        contract = feed.contract()
-        ticker = feed.ticker()
-        mark = _float(ticker.get("mark_price"))
-        if mark <= 0:
-            raise RuntimeError("行情不可用（mark_price=0）")
-        self.tick_size = _float(contract.get("order_price_round"), 0.01)
-        self.step_size = _float(contract.get("quanto_multiplier"), 0.01)
-        self.min_qty = max(self.step_size, _float(contract.get("order_size_min"), 1) * self.step_size)
-        self.mark = mark
-        self.index_price = _float(ticker.get("index_price"), mark)
-        self.funding_rate = _float(ticker.get("funding_rate"))
+        symbols = [s.strip().upper() for s in self.config.symbols if s.strip()]
+        if not symbols:
+            raise ValueError("模拟盘未配置标的（GRIDTRADE_PAPER_SYMBOLS）")
+        contracts = {symbol: feed.contract(symbol) for symbol in symbols}
+        rows = feed.tickers(symbols)
+        by_symbol = {str(row.get("contract", "")).upper(): row for row in rows}
         cfg = self.config
-        step = _round_to(mark * cfg.spacing_bp / 1e4, self.tick_size)
-        if step < self.tick_size:
-            raise ValueError(
-                f"网格间距 {cfg.spacing_bp:g}bp 小于最小价格变动 {self.tick_size:g}"
+        budget = cfg.capital * cfg.leverage / max(1, len(symbols) * max(1, cfg.levels))
+        states: dict[str, SymbolState] = {}
+        for symbol in symbols:
+            contract = contracts[symbol]
+            row = by_symbol.get(symbol)
+            if not row:
+                raise RuntimeError(f"没有 {symbol} 的行情")
+            mark = _float(row.get("mark_price"))
+            if mark <= 0:
+                raise RuntimeError(f"{symbol} 行情不可用（mark_price=0）")
+            tick = _float(contract.get("order_price_round"), 0.01)
+            mult = _float(contract.get("quanto_multiplier"), 0.01)
+            min_qty = max(mult, _float(contract.get("order_size_min"), 1) * mult)
+            step = _round_to(mark * cfg.spacing_bp / 1e4, tick)
+            if step < tick:
+                raise ValueError(f"{symbol} 间距 {cfg.spacing_bp:g}bp 小于最小价格变动 {tick:g}")
+            unit = _floor_to(budget / mark, mult)
+            if unit < min_qty:
+                unit = min_qty
+            change = row.get("change_percentage")
+            states[symbol] = SymbolState(
+                symbol=symbol,
+                mark=mark,
+                index_price=_float(row.get("index_price"), mark),
+                change_pct=_float(change) if change is not None else None,
+                funding_rate=_float(row.get("funding_rate")),
+                anchor=mark,
+                step=step,
+                unit=unit,
+                tick_size=tick,
+                step_size=mult,
+                min_qty=min_qty,
+                funding_next=int(contract.get("funding_next_apply") or 0) or None,
+                funding_interval=int(contract.get("funding_interval") or 28_800),
             )
-        unit = _floor_to(cfg.capital * cfg.leverage / max(1, cfg.levels) / mark, self.step_size)
-        if unit < self.min_qty:
-            unit = self.min_qty
-        self.account = PaperAccount(
-            cash=float(cfg.capital),
-            anchor=mark,
-            step=step,
-            unit=unit,
-            funding_next=int(contract.get("funding_next_apply") or 0) or None,
-            funding_interval=int(contract.get("funding_interval") or 28_800),
-        )
-        self.account.peak_equity = cfg.capital
+        self.state = states
+        self.account = PortfolioAccount(cash=float(cfg.capital), peak_equity=float(cfg.capital))
         self.equity = float(cfg.capital)
+        self.gross = 0.0
         self.started_at = _iso(time.time())
         self.last_error = None
         self.last_tick_at = _iso(time.time())
@@ -519,6 +588,7 @@ class PaperEngine:
             conn.execute("DELETE FROM paper_fills")
             conn.execute("DELETE FROM paper_equity")
             conn.execute("DELETE FROM paper_funding")
+            conn.execute("DELETE FROM paper_symbols")
         self._save()
 
     # -- persistence -----------------------------------------------------
@@ -530,6 +600,14 @@ class PaperEngine:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            tables = {
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+            legacy = "paper_account" in tables and "paper_symbols" not in tables
+            if legacy:
+                for table in ("paper_account", "paper_fills", "paper_equity", "paper_funding"):
+                    conn.execute(f"DROP TABLE IF EXISTS {table}")
             conn.executescript(SCHEMA)
             conn.commit()
 
@@ -539,42 +617,71 @@ class PaperEngine:
             self.status,
             json.dumps(asdict(self.config), sort_keys=True),
             account.cash,
-            account.position,
-            account.avg_entry,
-            account.peak_equity,
             account.realized,
             account.fees,
             account.funding,
-            account.anchor,
-            account.step,
-            account.unit,
-            account.funding_next,
-            account.funding_interval,
+            account.peak_equity,
             self.started_at,
             _iso(time.time()),
             self.last_error,
-            self.mark,
-            float(getattr(self, "equity", account.cash)),
+            self.equity,
+            self.gross,
         )
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO paper_account (id, status, config, cash, position, avg_entry, peak_equity,"
-                " realized, fees, funding, anchor, step, unit, funding_next, funding_interval,"
-                " started_at, updated_at, last_error, mark, equity) VALUES"
-                " (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO paper_account (id, status, config, cash, realized, fees, funding,"
+                " peak_equity, started_at, updated_at, last_error, equity, gross) VALUES"
+                " (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(id) DO UPDATE SET status=excluded.status, config=excluded.config,"
-                " cash=excluded.cash, position=excluded.position, avg_entry=excluded.avg_entry,"
-                " peak_equity=excluded.peak_equity, realized=excluded.realized, fees=excluded.fees,"
-                " funding=excluded.funding, anchor=excluded.anchor, step=excluded.step, unit=excluded.unit,"
-                " funding_next=excluded.funding_next, funding_interval=excluded.funding_interval,"
+                " cash=excluded.cash, realized=excluded.realized, fees=excluded.fees,"
+                " funding=excluded.funding, peak_equity=excluded.peak_equity,"
                 " started_at=excluded.started_at, updated_at=excluded.updated_at,"
-                " last_error=excluded.last_error, mark=excluded.mark, equity=excluded.equity",
+                " last_error=excluded.last_error, equity=excluded.equity, gross=excluded.gross",
                 payload,
             )
+            for state in self.state.values():
+                conn.execute(
+                    "INSERT INTO paper_symbols (symbol, mark, index_price, change_pct, funding_rate,"
+                    " anchor, step, unit, tick_size, step_size, min_qty, position, avg_entry,"
+                    " funding_next, funding_interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    " ON CONFLICT(symbol) DO UPDATE SET mark=excluded.mark,"
+                    " index_price=excluded.index_price, change_pct=excluded.change_pct,"
+                    " funding_rate=excluded.funding_rate, anchor=excluded.anchor, step=excluded.step,"
+                    " unit=excluded.unit, tick_size=excluded.tick_size, step_size=excluded.step_size,"
+                    " min_qty=excluded.min_qty, position=excluded.position,"
+                    " avg_entry=excluded.avg_entry, funding_next=excluded.funding_next,"
+                    " funding_interval=excluded.funding_interval",
+                    (
+                        state.symbol,
+                        state.mark,
+                        state.index_price,
+                        state.change_pct,
+                        state.funding_rate,
+                        state.anchor,
+                        state.step,
+                        state.unit,
+                        state.tick_size,
+                        state.step_size,
+                        state.min_qty,
+                        state.position,
+                        state.avg_entry,
+                        state.funding_next,
+                        state.funding_interval,
+                    ),
+                )
+            if self.state:
+                placeholders = ",".join("?" * len(self.state))
+                conn.execute(
+                    f"DELETE FROM paper_symbols WHERE symbol NOT IN ({placeholders})",
+                    tuple(self.state),
+                )
+            else:
+                conn.execute("DELETE FROM paper_symbols")
 
     def _load(self) -> None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM paper_account WHERE id = 1").fetchone()
+            symbol_rows = conn.execute("SELECT * FROM paper_symbols").fetchall()
         if row is None:
             self.equity = self.config.capital
             return
@@ -585,25 +692,38 @@ class PaperEngine:
             self.config = replace(self.config, **allowed)
         except (ValueError, TypeError):
             pass
-        self.account = PaperAccount(
+        self.account = PortfolioAccount(
             cash=row["cash"],
-            position=row["position"],
-            avg_entry=row["avg_entry"],
-            peak_equity=row["peak_equity"],
             realized=row["realized"],
             fees=row["fees"],
             funding=row["funding"],
-            anchor=row["anchor"],
-            step=row["step"],
-            unit=row["unit"],
-            funding_next=row["funding_next"],
-            funding_interval=row["funding_interval"],
+            peak_equity=row["peak_equity"],
         )
-        self.mark = row["mark"]
         self.equity = row["equity"]
+        self.gross = row["gross"]
         self.started_at = row["started_at"]
         self.last_error = row["last_error"]
         self.last_tick_at = row["updated_at"]
+        states: dict[str, SymbolState] = {}
+        for symbol_row in symbol_rows:
+            states[symbol_row["symbol"]] = SymbolState(
+                symbol=symbol_row["symbol"],
+                mark=symbol_row["mark"],
+                index_price=symbol_row["index_price"],
+                change_pct=symbol_row["change_pct"],
+                funding_rate=symbol_row["funding_rate"],
+                anchor=symbol_row["anchor"],
+                step=symbol_row["step"],
+                unit=symbol_row["unit"],
+                tick_size=symbol_row["tick_size"],
+                step_size=symbol_row["step_size"],
+                min_qty=symbol_row["min_qty"],
+                position=symbol_row["position"],
+                avg_entry=symbol_row["avg_entry"],
+                funding_next=symbol_row["funding_next"],
+                funding_interval=symbol_row["funding_interval"],
+            )
+        self.state = states
 
     # -- read models -----------------------------------------------------
 
@@ -611,29 +731,56 @@ class PaperEngine:
         with self._lock:
             account = self.account
             equity = float(getattr(self, "equity", account.cash))
-            unrealized = account.position * (self.mark - account.avg_entry) if account.position else 0.0
+            unrealized = sum(state.unrealized for state in self.state.values())
             drawdown = 0.0
             if account.peak_equity > 0:
                 drawdown = (account.peak_equity - equity) / account.peak_equity * 100
-            buy, sell = self._grid()
+            portfolio: list[dict[str, Any]] = []
+            for state in self.state.values():
+                buy, sell = state.grid()
+                level = int(round(-state.position / state.unit)) if state.unit else 0
+                portfolio.append(
+                    {
+                        "symbol": state.symbol,
+                        "mark_price": state.mark,
+                        "index_price": state.index_price,
+                        "change_24h_pct": state.change_pct,
+                        "funding_rate": state.funding_rate,
+                        "next_funding_time": _iso(state.funding_next),
+                        "position": state.position,
+                        "avg_entry": state.avg_entry,
+                        "unrealized": state.unrealized,
+                        "notional": abs(state.position) * state.mark,
+                        "anchor": state.anchor,
+                        "step": state.step,
+                        "unit": state.unit,
+                        "level": level,
+                        "buy_price": buy,
+                        "sell_price": sell,
+                        "max_position": state.unit * self.config.levels,
+                    }
+                )
             with self._connect() as conn:
-                fills = [dict(r) for r in conn.execute("SELECT * FROM paper_fills ORDER BY id DESC LIMIT 50")]
-                funding = [dict(r) for r in conn.execute("SELECT * FROM paper_funding ORDER BY id DESC LIMIT 20")]
+                fills = [
+                    dict(r)
+                    for r in conn.execute("SELECT * FROM paper_fills ORDER BY id DESC LIMIT 60")
+                ]
+                funding = [
+                    dict(r)
+                    for r in conn.execute("SELECT * FROM paper_funding ORDER BY id DESC LIMIT 30")
+                ]
                 equity_rows = [
                     [r["ts"], r["equity"]]
-                    for r in conn.execute("SELECT ts, equity FROM paper_equity ORDER BY id DESC LIMIT 600")
+                    for r in conn.execute(
+                        "SELECT ts, equity FROM paper_equity ORDER BY id DESC LIMIT 600"
+                    )
                 ]
             equity_rows.reverse()
             return {
                 "enabled": self.config.enabled,
                 "status": self.status,
-                "symbol": self.config.symbol,
+                "symbols": list(self.state),
                 "source": "gate",
-                "mark_price": self.mark,
-                "index_price": self.index_price,
-                "change_24h_pct": self.change_24h_pct,
-                "funding_rate": self.funding_rate,
-                "next_funding_time": _iso(account.funding_next),
                 "last_tick_at": self.last_tick_at,
                 "last_error": self.last_error,
                 "config": asdict(self.config),
@@ -645,23 +792,16 @@ class PaperEngine:
                     "realized": account.realized,
                     "fees": account.fees,
                     "funding": account.funding,
-                    "position": account.position,
-                    "avg_entry": account.avg_entry,
+                    "gross_notional": self.gross,
+                    "margin_used": self.gross / max(1.0, self.config.leverage),
                     "leverage": self.config.leverage,
-                    "margin_used": abs(account.position) * self.mark / max(1.0, self.config.leverage),
                     "peak_equity": account.peak_equity,
                     "drawdown_pct": drawdown,
-                    "return_pct": (equity / self.config.capital - 1) * 100 if self.config.capital else 0.0,
+                    "return_pct": (equity / self.config.capital - 1) * 100
+                    if self.config.capital
+                    else 0.0,
                 },
-                "grid": {
-                    "anchor": account.anchor,
-                    "step": account.step,
-                    "unit": account.unit,
-                    "level": int(round(-account.position / account.unit)) if account.unit else 0,
-                    "buy_price": buy,
-                    "sell_price": sell,
-                    "max_position": account.unit * self.config.levels,
-                },
+                "portfolio": portfolio,
                 "fills": fills,
                 "funding": funding,
                 "equity": equity_rows,

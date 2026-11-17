@@ -1,4 +1,4 @@
-"""Paper-trading engine tests: deterministic ticks, fees, funding and stop."""
+"""Paper-trading engine tests: multi-symbol portfolio, fees, funding, stop."""
 
 from __future__ import annotations
 
@@ -12,35 +12,41 @@ from gridtrade.api.paper import PaperEngine
 
 
 class FakeFeed:
-    def __init__(self, mark: float = 100.0) -> None:
-        self.mark = mark
-        self.funding_rows: list[dict[str, float | str]] = []
+    def __init__(self) -> None:
+        self.marks = {"AAA_USDT": 100.0, "BBB_USDT": 50.0}
+        self.funding_rows: dict[str, list[dict[str, float | str]]] = {
+            "AAA_USDT": [],
+            "BBB_USDT": [],
+        }
         self.next_apply = int(time.time()) + 3_600
 
-    def contract(self) -> dict[str, float | int | str]:
+    def contract(self, symbol: str) -> dict[str, float | int | str]:
         return {
             "order_price_round": "0.01",
             "quanto_multiplier": "0.01",
             "order_size_min": 1,
             "funding_next_apply": self.next_apply,
             "funding_interval": 28_800,
-            "mark_price": str(self.mark),
         }
 
-    def ticker(self) -> dict[str, float | str]:
-        return {
-            "mark_price": str(self.mark),
-            "index_price": str(self.mark),
-            "funding_rate": "0.0001",
-            "change_percentage": "0.5",
-        }
+    def tickers(self, symbols: list[str]) -> list[dict[str, float | str]]:
+        return [
+            {
+                "contract": symbol,
+                "mark_price": str(self.marks[symbol]),
+                "index_price": str(self.marks[symbol]),
+                "funding_rate": "0.0001",
+                "change_percentage": "0.5",
+            }
+            for symbol in symbols
+        ]
 
-    def funding(self, limit: int = 10) -> list[dict[str, float | str]]:
-        return self.funding_rows
+    def funding(self, symbol: str, limit: int = 10) -> list[dict[str, float | str]]:
+        return self.funding_rows.get(symbol, [])
 
 
-def make_engine(tmp_path: Path, **config: float | int | str) -> tuple[PaperEngine, FakeFeed]:
-    values: dict[str, float | int | str] = {
+def make_engine(tmp_path: Path, **config: object) -> tuple[PaperEngine, FakeFeed]:
+    values: dict[str, object] = {
         "capital": 10_000.0,
         "leverage": 2.0,
         "spacing_bp": 100.0,
@@ -50,112 +56,127 @@ def make_engine(tmp_path: Path, **config: float | int | str) -> tuple[PaperEngin
         "stop_dd_pct": 0.0,
         "poll_seconds": 3_600.0,
         "autostart": False,
-        "symbol": "TEST_USDT",
+        "symbols": ["AAA_USDT", "BBB_USDT"],
     }
     values.update(config)
-    cfg = PaperConfig(**values)
     feed = FakeFeed()
-    engine = PaperEngine(cfg, tmp_path, feed=feed)
+    engine = PaperEngine(PaperConfig(**values), tmp_path, feed=feed)
     engine.start(reset=True, background=False)
     return engine, feed
 
 
-def test_grid_fills_charge_fees_and_realize_pnl(tmp_path: Path) -> None:
+def test_portfolio_sizing_and_shared_fees(tmp_path: Path) -> None:
     engine, feed = make_engine(tmp_path)
-    assert engine.account.unit == pytest.approx(20.0)
-    assert engine.account.anchor == pytest.approx(100.0)
+    assert set(engine.state) == {"AAA_USDT", "BBB_USDT"}
+    assert engine.state["AAA_USDT"].unit == pytest.approx(10.0)
+    assert engine.state["BBB_USDT"].unit == pytest.approx(20.0)
 
-    feed.mark = 99.0
+    feed.marks["AAA_USDT"] = 99.0
+    feed.marks["BBB_USDT"] = 49.5
     engine.tick()
     account = engine.account
-    assert account.position == pytest.approx(20.0)
-    assert account.avg_entry == pytest.approx(99.0)
-    assert account.fees == pytest.approx(20 * 99 * 0.0002)
-    assert account.cash == pytest.approx(10_000 - 20 * 99 * 0.0002)
+    aaa = engine.state["AAA_USDT"]
+    bbb = engine.state["BBB_USDT"]
+    assert aaa.position == pytest.approx(10.0)
+    assert bbb.position == pytest.approx(20.0)
+    fee_aaa = 10 * 99 * 0.0002
+    fee_bbb = 20 * 49.5 * 0.0002
+    assert account.fees == pytest.approx(fee_aaa + fee_bbb)
+    assert account.cash == pytest.approx(10_000 - fee_aaa - fee_bbb)
+    assert engine.equity == pytest.approx(account.cash)
 
-    feed.mark = 100.5
+    feed.marks["AAA_USDT"] = 100.5
     engine.tick()
-    assert account.position == pytest.approx(0.0)
-    assert account.realized == pytest.approx(20.0)
-    assert account.fees == pytest.approx(20 * 99 * 0.0002 + 20 * 100 * 0.0002)
-    assert engine.equity == pytest.approx(10_000 + 20 - 20 * 99 * 0.0002 - 20 * 100 * 0.0002)
+    assert aaa.position == pytest.approx(0.0)
+    assert account.realized == pytest.approx(10.0)
 
     snapshot = engine.snapshot()
-    assert snapshot["source"] == "gate"
-    assert snapshot["account"]["return_pct"] == pytest.approx(
-        (engine.equity / 10_000 - 1) * 100
-    )
-    assert snapshot["grid"]["buy_price"] == pytest.approx(99.0)
-    assert snapshot["grid"]["sell_price"] == pytest.approx(101.0)
-    assert len(snapshot["fills"]) == 2
+    assert snapshot["symbols"] == ["AAA_USDT", "BBB_USDT"]
+    assert snapshot["account"]["gross_notional"] > 0
+    assert len(snapshot["portfolio"]) == 2
+    assert snapshot["portfolio"][1]["unit"] == pytest.approx(20.0)
+    assert len(snapshot["fills"]) == 3
+    assert {fill["symbol"] for fill in snapshot["fills"]} == {"AAA_USDT", "BBB_USDT"}
 
 
-def test_funding_long_pays_and_short_receives(tmp_path: Path) -> None:
+def test_shared_margin_cap_blocks_overexposure(tmp_path: Path) -> None:
+    engine, _ = make_engine(tmp_path)
+    state = engine.state["AAA_USDT"]
+    engine.equity = 1_000.0
+    engine.config.leverage = 2.0  # cap = 2000
+    engine.gross = 1_900.0
+    assert engine._has_margin(state, 100.0, 0.5) is True  # 1950 <= 2000
+    engine.gross = 1_980.0
+    assert engine._has_margin(state, 100.0, 0.5) is False  # 2030 > 2000
+
+
+def test_funding_per_symbol_and_net_cost(tmp_path: Path) -> None:
     engine, feed = make_engine(tmp_path)
-    account = engine.account
-    feed.mark = 99.5
-    account.position = 20.0
-    account.avg_entry = 100.0
+    aaa = engine.state["AAA_USDT"]
+    bbb = engine.state["BBB_USDT"]
+    aaa.position, aaa.avg_entry = 10.0, 100.0
+    bbb.position, bbb.avg_entry = -20.0, 50.0
     when = int(time.time()) - 1
-    account.funding_next = when
-    feed.funding_rows = [{"t": when, "r": "0.0001"}]
-    cash_before = account.cash
+    aaa.funding_next = when
+    bbb.funding_next = when
+    feed.funding_rows["AAA_USDT"] = [{"t": when, "r": "0.0001"}]
+    feed.funding_rows["BBB_USDT"] = [{"t": when, "r": "0.0001"}]
+    feed.marks["AAA_USDT"] = 99.5  # between grid levels, no fill
+    feed.marks["BBB_USDT"] = 50.5
+    cash_before = engine.account.cash
 
     engine.tick()
-    payment = 20 * 99.5 * 0.0001
-    assert account.funding == pytest.approx(payment)
-    assert account.cash == pytest.approx(cash_before - payment)
-    assert account.funding_next == when + 28_800
-    assert engine.snapshot()["funding"][0]["rate"] == pytest.approx(0.0001)
-
-    engine2, feed2 = make_engine(tmp_path / "short")
-    account2 = engine2.account
-    feed2.mark = 100.5
-    account2.position = -20.0
-    account2.avg_entry = 100.0
-    when2 = int(time.time()) - 1
-    account2.funding_next = when2
-    feed2.funding_rows = [{"t": when2, "r": "0.0001"}]
-    cash2 = account2.cash
-
-    engine2.tick()
-    payment2 = -20 * 100.5 * 0.0001
-    assert account2.funding == pytest.approx(payment2)
-    assert account2.cash == pytest.approx(cash2 - payment2)
+    payment_aaa = 10 * 99.5 * 0.0001  # long pays
+    payment_bbb = -20 * 50.5 * 0.0001  # short receives
+    assert engine.account.funding == pytest.approx(payment_aaa + payment_bbb)
+    assert engine.account.cash == pytest.approx(cash_before - payment_aaa - payment_bbb)
+    snapshot = engine.snapshot()
+    assert {row["symbol"] for row in snapshot["funding"]} == {"AAA_USDT", "BBB_USDT"}
+    assert aaa.funding_next == when + 28_800
+    assert bbb.funding_next == when + 28_800
 
 
-def test_stop_loss_flattens_and_persists(tmp_path: Path) -> None:
+def test_portfolio_stop_flattens_all_and_persists(tmp_path: Path) -> None:
     engine, feed = make_engine(
         tmp_path,
         capital=1_000.0,
         leverage=1.0,
+        levels=10,
         stop_dd_pct=1.0,
     )
-    feed.mark = 99.0
+    feed.marks["AAA_USDT"] = 99.0
+    feed.marks["BBB_USDT"] = 49.5
     engine.tick()
-    assert engine.account.position > 0
+    assert engine.state["AAA_USDT"].position > 0
+    assert engine.state["BBB_USDT"].position > 0
 
-    feed.mark = 90.0
+    feed.marks["AAA_USDT"] = 80.0
+    feed.marks["BBB_USDT"] = 40.0
     engine.tick()
     assert engine.status == "halted"
-    assert engine.account.position == pytest.approx(0.0)
-    assert engine.last_error is not None and "止损" in engine.last_error
+    assert all(abs(state.position) <= 1e-9 for state in engine.state.values())
+    assert "止损" in (engine.last_error or "")
+    stop_fills = [row for row in engine.snapshot()["fills"] if row["reason"] == "stop"]
+    assert len(stop_fills) == 2
 
     reloaded = PaperEngine(engine.config, tmp_path, feed=feed)
     assert reloaded.status == "halted"
-    assert reloaded.account.position == pytest.approx(0.0)
+    assert all(abs(state.position) <= 1e-9 for state in reloaded.state.values())
     assert reloaded.account.cash == pytest.approx(engine.account.cash)
 
 
-def test_reset_reanchors_and_clears_history(tmp_path: Path) -> None:
+def test_reset_reanchors_all_symbols(tmp_path: Path) -> None:
     engine, feed = make_engine(tmp_path)
-    feed.mark = 99.0
+    feed.marks["AAA_USDT"] = 99.0
     engine.tick()
-    assert engine.account.position != 0
+    assert engine.state["AAA_USDT"].position != 0
 
-    feed.mark = 120.0
+    feed.marks["AAA_USDT"] = 120.0
+    feed.marks["BBB_USDT"] = 60.0
     state = engine.reset()
-    assert state["account"]["position"] == pytest.approx(0.0)
     assert state["account"]["cash"] == pytest.approx(10_000.0)
-    assert state["grid"]["anchor"] == pytest.approx(120.0)
+    assert state["account"]["equity"] == pytest.approx(10_000.0)
     assert state["fills"] == []
+    anchors = {row["symbol"]: row["anchor"] for row in state["portfolio"]}
+    assert anchors["AAA_USDT"] == pytest.approx(120.0)
+    assert anchors["BBB_USDT"] == pytest.approx(60.0)

@@ -86,6 +86,18 @@ def _token(var_dir: Path) -> str:
     return value
 
 
+def _symbols() -> list[str]:
+    raw = os.environ.get("GRIDTRADE_PAPER_SYMBOLS") or os.environ.get(
+        "GRIDTRADE_PAPER_SYMBOL", "SKHY_USDT,SPCX_USDT,GOOGL_USDT,AMGN_USDT"
+    )
+    seen: list[str] = []
+    for item in raw.split(","):
+        name = item.strip().upper()
+        if name and name not in seen:
+            seen.append(name)
+    return seen or ["SKHY_USDT", "SPCX_USDT", "GOOGL_USDT", "AMGN_USDT"]
+
+
 @dataclass(slots=True)
 class PaperConfig:
     """Live paper-trading grid driven by a public futures market feed."""
@@ -93,7 +105,9 @@ class PaperConfig:
     enabled: bool = False
     autostart: bool = False
     source: str = "gate"
-    symbol: str = "GOOGL_USDT"
+    symbols: list[str] = field(
+        default_factory=lambda: ["SKHY_USDT", "SPCX_USDT", "GOOGL_USDT", "AMGN_USDT"]
+    )
     capital: float = 10_000.0
     leverage: float = 2.0
     spacing_bp: float = 60.0
@@ -109,7 +123,7 @@ class PaperConfig:
             enabled=_env_bool("GRIDTRADE_PAPER_ENABLED", True),
             autostart=_env_bool("GRIDTRADE_PAPER_AUTOSTART", True),
             source=os.environ.get("GRIDTRADE_PAPER_SOURCE", "gate").strip().lower(),
-            symbol=os.environ.get("GRIDTRADE_PAPER_SYMBOL", "GOOGL_USDT").strip().upper(),
+            symbols=_symbols(),
             capital=_as_float("GRIDTRADE_PAPER_CAPITAL", 10_000.0),
             leverage=_as_float("GRIDTRADE_PAPER_LEVERAGE", 2.0),
             spacing_bp=_as_float("GRIDTRADE_PAPER_SPACING_BP", 60.0),

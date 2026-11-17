@@ -96,7 +96,7 @@ cp .env.example .env
 | --- | --- | --- |
 | `GRIDTRADE_PAPER_ENABLED` | `0` | 是否启用实时模拟盘 |
 | `GRIDTRADE_PAPER_AUTOSTART` | `0` | 服务启动后自动开始/恢复模拟盘 |
-| `GRIDTRADE_PAPER_SYMBOL` | `GOOGL_USDT` | Gate USDT 永续合约 |
+| `GRIDTRADE_PAPER_SYMBOLS` | `SKHY_USDT,SPCX_USDT,GOOGL_USDT,AMGN_USDT` | Gate USDT 永续合约（逗号分隔） |
 | `GRIDTRADE_PAPER_CAPITAL` | `10000` | 纸面本金（USDT） |
 | `GRIDTRADE_PAPER_LEVERAGE` | `2` | 总名义 / 本金 |
 | `GRIDTRADE_PAPER_SPACING_BP` | `60` | 网格间距（bp） |
@@ -120,7 +120,7 @@ cp .env.example .env
 | `#/market` | 带成交标记的 K 线、资金费率历史、套息汇总 |
 | `#/strategy` | 网格参数、参数校验、价格区间/敞口/止损风险的实时预览 |
 | `#/backtest` | 回放 / 前向滚动 / 参数扫描、月度归因、订单流、权益与回撤 |
-| `#/paper` | 实时模拟盘：Gate 永续行情、网格纸面成交、手续费/资金费、权益与持仓 |
+| `#/paper` | 实时组合模拟盘：多标的共享保证金、网格纸面成交、手续费/资金费、组合权益与持仓 |
 | `#/orders` | 任务选择、订单/成交表、拒单原因、期末挂单 |
 | `#/positions` | 模拟持仓、网格状态、分层库存 |
 | `#/risk` | 派生限额、回撤保护、紧急停止、拒单计数 |
@@ -234,7 +234,7 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 57 项
+.venv/bin/python -m pytest            # 58 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 
@@ -242,8 +242,9 @@ cd web && pnpm typecheck              # tsc --noEmit
 
 - **实盘交易处于锁定状态。** `MODES` 启用 `research` 与 `paper`（实时纸面网格，
   只读公开行情），`live` 没有适配器。任何时候都不会索取或保存交易所密钥。
-- 实时模拟盘使用 Gate.io USDT 永续公开行情与资金费率（服务器可访问），不连接任何
-  私有接口、不下单；成交、手续费、资金费与权益写入 `var/paper.db`。
+- 实时组合模拟盘使用 Gate.io USDT 永续公开行情与资金费率（服务器可访问），不连接任何
+  私有接口、不下单；默认 `SKHY_USDT / SPCX_USDT / GOOGL_USDT / AMGN_USDT`，共享一个
+  保证金池，成交、手续费、资金费与组合权益写入 `var/paper.db`。
 - 单用户、单进程。写入通过锁串行化；SQLite 使用 WAL 模式与短连接。
 - 行情快照走币安公共 REST，失败时降级为 `source: "offline"`，而不是阻塞界面。
 - 模拟成交使用分钟 K 线的最高/最低价；资金费率按记录的资金事件扣缴，

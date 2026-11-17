@@ -160,7 +160,7 @@ class KillSwitchRequest(BaseModel):
 class PaperConfigRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    symbol: str | None = Field(None, min_length=3, max_length=32)
+    symbols: list[str] | None = Field(None, min_length=1, max_length=8)
     capital: float | None = Field(None, gt=0, le=10_000_000)
     leverage: float | None = Field(None, gt=0, le=20)
     spacing_bp: float | None = Field(None, gt=0, le=5_000)

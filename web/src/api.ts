@@ -125,6 +125,7 @@ export type PaperStatus = 'running' | 'stopped' | 'halted'
 export interface PaperFill {
   id: number
   ts: string
+  symbol: string
   side: 'BUY' | 'SELL'
   price: number
   qty: number
@@ -136,6 +137,7 @@ export interface PaperFill {
 export interface PaperFunding {
   id: number
   ts: string
+  symbol: string
   rate: number
   payment: number
   position: number
@@ -146,7 +148,7 @@ export interface PaperConfigView {
   enabled: boolean
   autostart: boolean
   source: string
-  symbol: string
+  symbols: string[]
   capital: number
   leverage: number
   spacing_bp: number
@@ -157,16 +159,31 @@ export interface PaperConfigView {
   poll_seconds: number
 }
 
-export interface PaperState {
-  enabled: boolean
-  status: PaperStatus
+export interface PaperSymbolView {
   symbol: string
-  source: string
   mark_price: number
   index_price: number
   change_24h_pct: number | null
   funding_rate: number
   next_funding_time: string | null
+  position: number
+  avg_entry: number
+  unrealized: number
+  notional: number
+  anchor: number
+  step: number
+  unit: number
+  level: number
+  buy_price: number
+  sell_price: number
+  max_position: number
+}
+
+export interface PaperState {
+  enabled: boolean
+  status: PaperStatus
+  symbols: string[]
+  source: string
   last_tick_at: string | null
   last_error: string | null
   config: PaperConfigView
@@ -178,30 +195,21 @@ export interface PaperState {
     realized: number
     fees: number
     funding: number
-    position: number
-    avg_entry: number
-    leverage: number
+    gross_notional: number
     margin_used: number
+    leverage: number
     peak_equity: number
     drawdown_pct: number
     return_pct: number
   }
-  grid: {
-    anchor: number
-    step: number
-    unit: number
-    level: number
-    buy_price: number
-    sell_price: number
-    max_position: number
-  }
+  portfolio: PaperSymbolView[]
   fills: PaperFill[]
   funding: PaperFunding[]
   equity: Array<[string, number]>
 }
 
 export interface PaperConfigInput {
-  symbol?: string
+  symbols?: string[]
   capital?: number
   leverage?: number
   spacing_bp?: number
