@@ -120,6 +120,98 @@ export interface EquityPoint {
   v: number
 }
 
+export type PaperStatus = 'running' | 'stopped' | 'halted'
+
+export interface PaperFill {
+  id: number
+  ts: string
+  side: 'BUY' | 'SELL'
+  price: number
+  qty: number
+  fee: number
+  realized: number
+  reason: string
+}
+
+export interface PaperFunding {
+  id: number
+  ts: string
+  rate: number
+  payment: number
+  position: number
+  mark: number
+}
+
+export interface PaperConfigView {
+  enabled: boolean
+  autostart: boolean
+  source: string
+  symbol: string
+  capital: number
+  leverage: number
+  spacing_bp: number
+  levels: number
+  stop_dd_pct: number
+  maker_fee_bp: number
+  taker_fee_bp: number
+  poll_seconds: number
+}
+
+export interface PaperState {
+  enabled: boolean
+  status: PaperStatus
+  symbol: string
+  source: string
+  mark_price: number
+  index_price: number
+  change_24h_pct: number | null
+  funding_rate: number
+  next_funding_time: string | null
+  last_tick_at: string | null
+  last_error: string | null
+  config: PaperConfigView
+  account: {
+    capital: number
+    cash: number
+    equity: number
+    unrealized: number
+    realized: number
+    fees: number
+    funding: number
+    position: number
+    avg_entry: number
+    leverage: number
+    margin_used: number
+    peak_equity: number
+    drawdown_pct: number
+    return_pct: number
+  }
+  grid: {
+    anchor: number
+    step: number
+    unit: number
+    level: number
+    buy_price: number
+    sell_price: number
+    max_position: number
+  }
+  fills: PaperFill[]
+  funding: PaperFunding[]
+  equity: Array<[string, number]>
+}
+
+export interface PaperConfigInput {
+  symbol?: string
+  capital?: number
+  leverage?: number
+  spacing_bp?: number
+  levels?: number
+  stop_dd_pct?: number
+  maker_fee_bp?: number
+  taker_fee_bp?: number
+  poll_seconds?: number
+}
+
 export interface Fill {
   ts: string
   side: string
@@ -535,6 +627,16 @@ export const api = {
   settings: () => request<SettingsView>('/api/settings'),
 
   audit: (limit = 60) => request<{ entries: AuditEntry[] }>(`/api/audit?limit=${limit}`),
+
+  paper: () => request<PaperState>('/api/paper'),
+
+  paperStart: (body: { reset?: boolean; config?: PaperConfigInput }) =>
+    request<PaperState>('/api/paper/start', json(body)),
+
+  paperStop: () => request<PaperState>('/api/paper/stop', { method: 'POST' }),
+
+  paperReset: (config?: PaperConfigInput) =>
+    request<PaperState>('/api/paper/reset', json(config ?? {})),
 }
 
 export function streamUrl(symbol?: string): string {

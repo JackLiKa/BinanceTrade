@@ -41,7 +41,8 @@ import org.json.JSONTokener;
 public class MainActivity extends Activity {
     private static final String TAG = "Gridtrade";
     private static final String PREFS = "gridtrade";
-    private static final String DEFAULT_SERVER = "http://81.71.71.131:8000";
+    private static final String DEFAULT_SERVER = BuildConfig.DEFAULT_SERVER;
+    private static final String DEFAULT_TOKEN = BuildConfig.DEFAULT_TOKEN;
 
     private static final int MATCH_PARENT = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP_CONTENT = ViewGroup.LayoutParams.WRAP_CONTENT;
@@ -82,10 +83,13 @@ public class MainActivity extends Activity {
         root.setFitsSystemWindows(true);
         setContentView(root);
         String savedServer = prefs.getString("server", "").trim();
-        if (savedServer.isEmpty()) {
+        String savedToken = prefs.getString("token", "").trim();
+        if (savedServer.isEmpty()) savedServer = DEFAULT_SERVER;
+        if (savedToken.isEmpty()) savedToken = DEFAULT_TOKEN;
+        if (savedToken.isEmpty()) {
             showSetup();
         } else {
-            showPanel(savedServer, prefs.getString("token", "").trim());
+            showPanel(savedServer, savedToken);
         }
     }
 

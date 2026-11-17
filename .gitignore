@@ -14,3 +14,8 @@ apk/*.idsig
 apk/*.jks
 .DS_Store
 apk/.idea/
+
+# local secrets / config
+.env
+apk/.env
+apk/build/gen/

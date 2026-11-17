@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Activity,
   BarChart3,
+  Bot,
   CandlestickChart,
   Database,
   FlaskConical,
@@ -33,6 +34,7 @@ const NAV: NavItem[] = [
   { route: 'market', label: '行情', icon: CandlestickChart, mobile: true },
   { route: 'strategy', label: '策略', icon: BarChart3, mobile: false },
   { route: 'backtest', label: '回测实验室', short: '回测', icon: FlaskConical, mobile: true },
+  { route: 'paper', label: '模拟盘', icon: Bot, mobile: false },
   { route: 'orders', label: '订单与成交', icon: ListOrdered, mobile: false },
   { route: 'positions', label: '持仓', icon: Wallet, mobile: false },
   { route: 'risk', label: '风控', icon: ShieldAlert, mobile: true },
@@ -45,6 +47,7 @@ export const TITLES: Record<RouteName, string> = {
   market: '行情',
   strategy: '策略',
   backtest: '回测实验室',
+  paper: '模拟盘',
   orders: '订单与成交',
   positions: '持仓',
   risk: '风控',

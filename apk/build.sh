@@ -24,7 +24,30 @@ if [ ! -f "$PLATFORM" ]; then
 fi
 
 rm -rf "$OUT"
-mkdir -p "$OUT/classes" "$OUT/dex"
+mkdir -p "$OUT/classes" "$OUT/dex" "$OUT/gen/com/gridtrade/panel"
+
+# Build-time config: apk/.env (gitignored) -> BuildConfig.java
+ENV_FILE="$HERE/.env"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+SERVER_URL="${SERVER_URL:-http://10.0.2.2:8000}"
+TOKEN_VALUE="${TOKEN:-}"
+SERVER_URL="${SERVER_URL%\"}"; SERVER_URL="${SERVER_URL#\"}"
+TOKEN_VALUE="${TOKEN_VALUE%\"}"; TOKEN_VALUE="${TOKEN_VALUE#\"}"
+cat > "$OUT/gen/com/gridtrade/panel/BuildConfig.java" <<JAVA
+package com.gridtrade.panel;
+
+final class BuildConfig {
+    static final String DEFAULT_SERVER = "$SERVER_URL";
+    static final String DEFAULT_TOKEN = "$TOKEN_VALUE";
+
+    private BuildConfig() {}
+}
+JAVA
 
 echo "== resources"
 "$BUILD_TOOLS/aapt2" compile --dir "$HERE/res" -o "$OUT/res.zip"
@@ -40,7 +63,7 @@ echo "== resources"
 
 echo "== compile"
 "$JAVAC" --release 17 -Xlint:-options -classpath "$PLATFORM" -d "$OUT/classes" \
-  $(find "$HERE/src" -name '*.java')
+  $(find "$HERE/src" "$OUT/gen" -name '*.java')
 
 echo "== dex"
 "$BUILD_TOOLS/d8" --lib "$PLATFORM" --min-api 26 --output "$OUT/dex" \

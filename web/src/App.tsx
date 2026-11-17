@@ -7,6 +7,7 @@ import { Overview } from './pages/Overview'
 import { Market } from './pages/Market'
 import { Strategy } from './pages/Strategy'
 import { Backtest } from './pages/Backtest'
+import { Paper } from './pages/Paper'
 import { Orders } from './pages/Orders'
 import { Positions } from './pages/Positions'
 import { Risk } from './pages/Risk'
@@ -45,6 +46,8 @@ function Shell() {
         <Strategy />
       ) : route === 'backtest' ? (
         <Backtest />
+      ) : route === 'paper' ? (
+        <Paper />
       ) : route === 'orders' ? (
         <Orders />
       ) : route === 'positions' ? (

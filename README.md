@@ -83,6 +83,29 @@ cd web && pnpm dev     # http://localhost:5173
 | `GRIDTRADE_SECURE_COOKIE` | `0` | 为认证 Cookie 加 `Secure`（仅 HTTPS） |
 | `GRIDTRADE_CORS_ORIGINS` | localhost:5173 | 逗号分隔的开发源 |
 
+也可以把配置写在仓库根目录的 `.env`（已 gitignore，真实环境变量优先）：
+
+```bash
+cp .env.example .env
+# 编辑 GRIDTRADE_TOKEN、GRIDTRADE_HOST、模拟盘参数等，然后重启服务
+```
+
+模拟盘相关变量：
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `GRIDTRADE_PAPER_ENABLED` | `0` | 是否启用实时模拟盘 |
+| `GRIDTRADE_PAPER_AUTOSTART` | `0` | 服务启动后自动开始/恢复模拟盘 |
+| `GRIDTRADE_PAPER_SYMBOL` | `GOOGL_USDT` | Gate USDT 永续合约 |
+| `GRIDTRADE_PAPER_CAPITAL` | `10000` | 纸面本金（USDT） |
+| `GRIDTRADE_PAPER_LEVERAGE` | `2` | 总名义 / 本金 |
+| `GRIDTRADE_PAPER_SPACING_BP` | `60` | 网格间距（bp） |
+| `GRIDTRADE_PAPER_LEVELS` | `20` | 单边最大格数 |
+| `GRIDTRADE_PAPER_STOP_DD_PCT` | `10` | 回撤止损（0 关闭） |
+| `GRIDTRADE_PAPER_MAKER_FEE_BP` | `2` | 挂单费率 |
+| `GRIDTRADE_PAPER_TAKER_FEE_BP` | `5` | 吃单费率 |
+| `GRIDTRADE_PAPER_POLL_SECONDS` | `3` | 行情轮询间隔 |
+
 在 localhost 之外暴露面板：
 
 - 局域网 / Tailscale：`GRIDTRADE_HOST=0.0.0.0`，然后访问 `http://<host>:8000`。
@@ -97,6 +120,7 @@ cd web && pnpm dev     # http://localhost:5173
 | `#/market` | 带成交标记的 K 线、资金费率历史、套息汇总 |
 | `#/strategy` | 网格参数、参数校验、价格区间/敞口/止损风险的实时预览 |
 | `#/backtest` | 回放 / 前向滚动 / 参数扫描、月度归因、订单流、权益与回撤 |
+| `#/paper` | 实时模拟盘：Gate 永续行情、网格纸面成交、手续费/资金费、权益与持仓 |
 | `#/orders` | 任务选择、订单/成交表、拒单原因、期末挂单 |
 | `#/positions` | 模拟持仓、网格状态、分层库存 |
 | `#/risk` | 派生限额、回撤保护、紧急停止、拒单计数 |
@@ -104,7 +128,7 @@ cd web && pnpm dev     # http://localhost:5173
 | `#/settings` | 服务器地址、令牌、执行模式、紧急停止、存储路径、审计日志 |
 
 导航是响应式的：`lg` 及以上为侧边栏，以下为底部导航栏加“更多”抽屉。
-布局已在 360×800 CSS、`font_scale 1.3` 下验证，所有路由均无横向溢出
+布局已在 390×844 CSS 与真机 WebView 下验证，所有路由均无横向溢出
 （`document.scrollWidth == clientWidth`）。
 
 ## API
@@ -162,18 +186,28 @@ adb install -r apk/gridtrade.apk
 部分 OPPO/OnePlus 机型会在 `adb install` 时卡在安装引导，可改用
 `pm install-create` / `pm install-write` / `pm install-commit` 分段安装。
 
-首次启动时 Activity 会要求填写服务器地址与令牌；进入面板后，在页面历史尽头按返回键
-可重新打开“服务器与令牌”菜单。
-默认 `http://81.71.71.131:8000`（当前部署地址），两者都存入 `SharedPreferences`。
-令牌还会同步写入 WebView 的 `localStorage`，避免 SPA 再次询问。
+**APK 默认免登录**：构建时读取 `apk/.env`（gitignore），把服务器地址与令牌写入
+`BuildConfig`，首次启动直接进入面板，不再显示登录页。
+
+```bash
+cp apk/.env.example apk/.env
+# SERVER_URL=http://81.71.71.131:8000
+# TOKEN=<服务端 var/token 或 .env 中的 GRIDTRADE_TOKEN>
+./apk/build.sh
+```
+
+没有 `apk/.env` 时会回退到内置默认地址并要求手动填写服务器/令牌（首次安装或清除数据后）。
+进入面板后，在页面历史尽头按返回键仍可打开“服务器与令牌”菜单。
 
 注意：
 
-- `minSdk 26`、`target 34`，允许明文 HTTP 以便局域网/Tailscale 使用。
+- 令牌会被编译进 APK，只应安装在自己的设备上；令牌轮换后需要重新构建。
+- `minSdk 26`、`target 34`，允许明文 HTTP 以便局域网/公网 IP 访问。
+- 只改 Web UI 不需要重建 APK：Activity 从服务端加载 `web/dist`。只有 Java、
+  manifest、资源或 `apk/.env` 变更才需要重建 APK。
+
 - `apk/gridtrade.jks` 是本地生成的密钥库（口令 `gridtrade`），仅用于侧载——
   分发前请用自己的密钥重新签名。
-- 只改 Web UI 不需要重建 APK：Activity 从服务端加载 `web/dist`。只有 Java、
-  manifest 或资源变更才需要重建 APK。
 
 验收截图（模拟器，`font_scale 1.3`，density 480）：
 
@@ -200,14 +234,16 @@ adb install -r apk/gridtrade.apk
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 53 项
+.venv/bin/python -m pytest            # 57 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 
 ## 有意为之的边界
 
-- **实盘交易处于锁定状态。** `MODES` 只启用 `research`；`paper` 已搭好骨架，
-  `live` 没有适配器。任何时候都不会索取或保存交易所密钥。
+- **实盘交易处于锁定状态。** `MODES` 启用 `research` 与 `paper`（实时纸面网格，
+  只读公开行情），`live` 没有适配器。任何时候都不会索取或保存交易所密钥。
+- 实时模拟盘使用 Gate.io USDT 永续公开行情与资金费率（服务器可访问），不连接任何
+  私有接口、不下单；成交、手续费、资金费与权益写入 `var/paper.db`。
 - 单用户、单进程。写入通过锁串行化；SQLite 使用 WAL 模式与短连接。
 - 行情快照走币安公共 REST，失败时降级为 `source: "offline"`，而不是阻塞界面。
 - 模拟成交使用分钟 K 线的最高/最低价；资金费率按记录的资金事件扣缴，

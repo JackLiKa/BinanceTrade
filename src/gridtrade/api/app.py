@@ -37,6 +37,7 @@ from ..strategy.grid import GridParams
 from .config import Settings
 from .jobs import JobQueue
 from .live import LiveMarket
+from .paper import PaperEngine
 from .service import INTERVALS, ResearchService
 from .store import Store
 
@@ -46,9 +47,9 @@ COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 MODES = {
     "research": {"enabled": True, "label": "研究", "detail": "本地 Parquet 回放"},
     "paper": {
-        "enabled": False,
-        "label": "模拟",
-        "detail": "等待流式模拟适配器；回放仍然可用",
+        "enabled": True,
+        "label": "模拟盘",
+        "detail": "Gate 永续实时行情，网格纸面成交（含手续费与资金费）",
     },
     "live": {"enabled": False, "locked": True, "label": "实盘", "detail": "未提供实盘适配器"},
 }
@@ -156,12 +157,32 @@ class KillSwitchRequest(BaseModel):
     engaged: bool
 
 
+class PaperConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str | None = Field(None, min_length=3, max_length=32)
+    capital: float | None = Field(None, gt=0, le=10_000_000)
+    leverage: float | None = Field(None, gt=0, le=20)
+    spacing_bp: float | None = Field(None, gt=0, le=5_000)
+    levels: int | None = Field(None, ge=1, le=500)
+    stop_dd_pct: float | None = Field(None, ge=0, le=100)
+    maker_fee_bp: float | None = Field(None, ge=0, le=200)
+    taker_fee_bp: float | None = Field(None, ge=0, le=500)
+    poll_seconds: float | None = Field(None, ge=1, le=60)
+
+
+class PaperStartRequest(BaseModel):
+    reset: bool = False
+    config: PaperConfigRequest | None = None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = Store(settings.var_dir / "gridtrade.db")
     live = LiveMarket()
     service = ResearchService(settings.data_dir, live)
     jobs = JobQueue(store, workers=2)
+    paper = PaperEngine(settings.paper, settings.var_dir)
     started_at = time.time()
 
     @asynccontextmanager
@@ -171,6 +192,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if recovered:
                 log.warning("recovered %s stale run(s) from previous process", recovered)
         jobs.start()
+        paper.autostart()
         symbols = service.symbols()
         log.info(
             "gridtrade api up: data=%s symbols=%s web=%s",
@@ -183,6 +205,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             jobs.stop()
+            paper.close()
             await live.close()
 
     app = FastAPI(
@@ -196,6 +219,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.store = store
     app.state.service = service
     app.state.jobs = jobs
+    app.state.paper = paper
 
     if settings.cors_origins:
         app.add_middleware(
@@ -471,6 +495,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"canceled": canceled, "run": run}
 
     # -- risk, settings, audit -------------------------------------------
+
+    # -- live paper trading ------------------------------------------------
+
+    @app.get("/api/paper", dependencies=guarded)
+    async def paper_state() -> dict[str, Any]:
+        return await asyncio.to_thread(paper.snapshot)
+
+    @app.post("/api/paper/start", dependencies=guarded)
+    async def paper_start(payload: PaperStartRequest) -> dict[str, Any]:
+        overrides = payload.config.model_dump(exclude_none=True) if payload.config else None
+        try:
+            state = await asyncio.to_thread(
+                paper.start, reset=payload.reset, overrides=overrides
+            )
+        except Exception as exc:  # market feed unreachable or invalid sizing
+            raise HTTPException(status_code=503, detail=f"模拟盘启动失败: {exc}") from exc
+        store.audit("paper.start", f"reset={payload.reset}")
+        return state
+
+    @app.post("/api/paper/stop", dependencies=guarded)
+    async def paper_stop() -> dict[str, Any]:
+        state = await asyncio.to_thread(paper.stop)
+        store.audit("paper.stop", "stopped")
+        return state
+
+    @app.post("/api/paper/reset", dependencies=guarded)
+    async def paper_reset(payload: PaperConfigRequest | None = None) -> dict[str, Any]:
+        overrides = payload.model_dump(exclude_none=True) if payload else None
+        try:
+            state = await asyncio.to_thread(paper.reset, overrides)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"模拟盘重置失败: {exc}") from exc
+        store.audit("paper.reset", "account reset")
+        return state
 
     @app.get("/api/risk", dependencies=guarded)
     async def risk(

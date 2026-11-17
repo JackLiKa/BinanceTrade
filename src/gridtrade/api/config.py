@@ -1,8 +1,9 @@
 """Runtime configuration for the HTTP API.
 
-Everything is environment-driven and local by default. The API writes a random
-access token to ``var/token`` on first boot instead of shipping a default
-credential; the login screen accepts that token.
+Everything is environment-driven and local by default. Values are read from the
+process environment first, then from a repo-root ``.env`` file (gitignored).
+The API writes a random access token to ``var/token`` on first boot instead of
+shipping a default credential; the login screen accepts that token.
 """
 
 from __future__ import annotations
@@ -15,11 +16,58 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _as_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _as_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(float(raw))
+    except ValueError:
+        return default
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
         return default
     return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def load_env_file(path: Path | None = None) -> Path | None:
+    """Load KEY=VALUE pairs from ``.env`` without overriding the environment.
+
+    Real environment variables win so systemd overrides and one-off commands
+    still behave as expected. Returns the file that was read, if any.
+    """
+    target = path or REPO_ROOT / ".env"
+    if not target.is_file():
+        return None
+    for raw in target.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        if key:
+            os.environ.setdefault(key, value)
+    return target
 
 
 def _token(var_dir: Path) -> str:
@@ -39,6 +87,41 @@ def _token(var_dir: Path) -> str:
 
 
 @dataclass(slots=True)
+class PaperConfig:
+    """Live paper-trading grid driven by a public futures market feed."""
+
+    enabled: bool = False
+    autostart: bool = False
+    source: str = "gate"
+    symbol: str = "GOOGL_USDT"
+    capital: float = 10_000.0
+    leverage: float = 2.0
+    spacing_bp: float = 60.0
+    levels: int = 20
+    stop_dd_pct: float = 10.0
+    maker_fee_bp: float = 2.0
+    taker_fee_bp: float = 5.0
+    poll_seconds: float = 3.0
+
+    @classmethod
+    def from_env(cls) -> PaperConfig:
+        return cls(
+            enabled=_env_bool("GRIDTRADE_PAPER_ENABLED", True),
+            autostart=_env_bool("GRIDTRADE_PAPER_AUTOSTART", True),
+            source=os.environ.get("GRIDTRADE_PAPER_SOURCE", "gate").strip().lower(),
+            symbol=os.environ.get("GRIDTRADE_PAPER_SYMBOL", "GOOGL_USDT").strip().upper(),
+            capital=_as_float("GRIDTRADE_PAPER_CAPITAL", 10_000.0),
+            leverage=_as_float("GRIDTRADE_PAPER_LEVERAGE", 2.0),
+            spacing_bp=_as_float("GRIDTRADE_PAPER_SPACING_BP", 60.0),
+            levels=_as_int("GRIDTRADE_PAPER_LEVELS", 20),
+            stop_dd_pct=_as_float("GRIDTRADE_PAPER_STOP_DD_PCT", 10.0),
+            maker_fee_bp=_as_float("GRIDTRADE_PAPER_MAKER_FEE_BP", 2.0),
+            taker_fee_bp=_as_float("GRIDTRADE_PAPER_TAKER_FEE_BP", 5.0),
+            poll_seconds=max(1.0, _as_float("GRIDTRADE_PAPER_POLL_SECONDS", 3.0)),
+        )
+
+
+@dataclass(slots=True)
 class Settings:
     data_dir: Path = REPO_ROOT / "research" / "data"
     var_dir: Path = REPO_ROOT / "var"
@@ -52,6 +135,7 @@ class Settings:
     cors_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
+    paper: PaperConfig = field(default_factory=PaperConfig)
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir)
@@ -63,6 +147,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        load_env_file()
         origins = os.environ.get(
             "GRIDTRADE_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
         )
@@ -72,9 +157,10 @@ class Settings:
             web_dir=Path(os.environ.get("GRIDTRADE_WEB", REPO_ROOT / "web" / "dist")),
             symbol=os.environ.get("GRIDTRADE_SYMBOL", "GOOGLUSDT"),
             host=os.environ.get("GRIDTRADE_HOST", "127.0.0.1"),
-            port=int(os.environ.get("GRIDTRADE_PORT", "8000")),
+            port=_as_int("GRIDTRADE_PORT", 8000),
             auto_run=_env_bool("GRIDTRADE_AUTORUN", True),
             secure_cookie=_env_bool("GRIDTRADE_SECURE_COOKIE", False),
             token=os.environ.get("GRIDTRADE_TOKEN", "").strip(),
             cors_origins=[o.strip() for o in origins.split(",") if o.strip()],
+            paper=PaperConfig.from_env(),
         )
