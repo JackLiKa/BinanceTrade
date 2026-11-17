@@ -15,7 +15,7 @@
 - 图表统一 lightweight-charts v5；4 个图表组件，单页最多 **2 个图表实例**（`Overview`、`Backtest` 回放、`Market`）。
 - 状态是 Context + `useState`（无 reducer）；行情走 WebSocket，断线指数退避重连（`web/src/store.tsx:126-187`）。
 - `params.ts` 只读写 `localStorage['gridtrade.params']`，**不做 URL/hash 参数序列化**（`web/src/params.ts:18-33`）。
-- APK：`versionCode 1 / versionName 0.1.0 / minSdk 26 / targetSdk 34`；`build.sh` 用 `javac --release 17`；**无 JS 桥**（全仓无 `addJavascriptInterface`；`apk/AndroidManifest.xml:4-7`、`apk/build.sh:65`）。
+- APK：`versionCode 1 / versionName **0.2.0（versionCode 2）** / minSdk 26 / targetSdk 34`；`build.sh` 用 `javac --release 17`；**无 JS 桥**（全仓无 `addJavascriptInterface`；`apk/AndroidManifest.xml:4-7`、`apk/build.sh:65`）。
 
 ## 目录
 
@@ -353,3 +353,23 @@ WebView 设置（`MainActivity.java:255-330`）：调试开关 `setWebContentsDe
 | APK 版本/SDK（`02-开发进度与变更记录.md:61`：0.1.0 / minSdk 26 / targetSdk 34） | **一致**；另 `versionCode=1`（旧文档未记）：`apk/AndroidManifest.xml:4-7`、`apk/build.sh:59-62` |
 | “pytest 53 passed”（`04-测试手册.md:13`）vs “74 passed”（`02:48`、`09:71`） | 文档内部矛盾，非前端代码事实；以最新测试结果为准，本文不裁决 |
 | APK 产物约 25KB（`02-开发进度与变更记录.md:65`） | `apk/gridtrade.apk` 实际 25,409 字节，与 `vault:52` 一致 |
+
+### 构建（Windows / Git Bash，2026-11-18 实测）
+
+pk/build.sh 原本只支持 macOS（/usr/libexec/java_home、无 .exe/.bat 后缀、依赖 zip）。已补跨平台支持：
+
+- JDK 未指定时回退到 PATH 上的 javac；Android 平台默认取 ndroid-34，缺失则取已安装的最新 platforms/*/android.jar
+- 构建工具按 apt2|d8|zipalign|apksigner 依次找无后缀/.exe/.bat/.cmd
+- javac 显式 -encoding UTF-8（否则 Windows 默认 GBK 会把中文源码编译失败）
+- 无 zip 时用 Python zipfile 追加 classes.dex
+- 版本号改为 VERSION_CODE=2 / VERSION_NAME=0.2.0（可用环境变量覆盖）
+
+命令：
+
+`ash
+ANDROID_HOME=/c/Users/<you>/AppData/Local/Android/Sdk bash apk/build.sh
+`
+
+产物：pk/gridtrade.apk（约 25 KB），apt2 dump badging 验证 ersionCode=2 / versionName=0.2.0 / minSdk=26 / targetSdk=34；BuildConfig.DEFAULT_SERVER 与 32 字符 DEFAULT_TOKEN 来自 pk/.env。
+
+> ⚠️ 本机没有旧签名密钥，构建时**新生成了 pk/gridtrade.jks**（gitignored）：安装前必须先卸载手机上的旧版 App（签名不同无法覆盖）；**务必备份该 keystore**，否则以后无法升级安装。

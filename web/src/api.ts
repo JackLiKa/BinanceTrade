@@ -426,6 +426,14 @@ export interface BinanceFillView {
   time?: number
 }
 
+export interface BinanceAlert {
+  ts: number
+  level: 'info' | 'warn' | 'critical'
+  kind: string
+  message: string
+  details?: Record<string, unknown>
+}
+
 export interface BinanceState {
   node_url: string
   health?: BinanceNodeHealth
@@ -434,6 +442,7 @@ export interface BinanceState {
   orders?: { ok: boolean; orders: BinanceOrderView[] }
   fills?: { ok: boolean; fills: BinanceFillView[] }
   history?: { ok: boolean; orders: BinanceOrderView[] }
+  alerts?: { ok: boolean; alerts: BinanceAlert[]; last_run_at?: number; last_error?: string | null }
   errors?: Record<string, string>
 }
 

@@ -33,6 +33,9 @@ export function Binance() {
   const orders = (data?.orders?.orders ?? []) as BinanceOrderView[]
   const fills = (data?.fills?.fills ?? []) as BinanceFillView[]
   const history = (data?.history?.orders ?? []) as BinanceOrderView[]
+  const alerts = data?.alerts?.alerts ?? []
+  const criticalAlerts = alerts.filter((row) => row.level === 'critical')
+  const warnAlerts = alerts.filter((row) => row.level === 'warn')
   const errors = data?.errors ?? {}
   const offline = !health || health.reachable === false
 
@@ -77,6 +80,16 @@ export function Binance() {
           {Object.entries(errors)
             .map(([key, msg]) => `${key}: ${msg}`)
             .join('；')}
+        </ErrorNote>
+      ) : null}
+
+      {criticalAlerts.length > 0 ? (
+        <ErrorNote>
+          对账告警（critical）：{criticalAlerts.slice(0, 3).map((row) => row.message).join('；')}
+        </ErrorNote>
+      ) : warnAlerts.length > 0 ? (
+        <ErrorNote>
+          对账告警（warn）：{warnAlerts.slice(0, 3).map((row) => row.message).join('；')}
         </ErrorNote>
       ) : null}
 
@@ -342,6 +355,46 @@ export function Binance() {
                     <td className="py-2 pr-3 text-right font-mono">{sizeText(row.executedQty)}</td>
                     <td className="py-2 pr-3">{row.status}</td>
                     <td className="py-2 pr-3 text-[11px] text-faint">{stamp(row.time)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <CardHead
+          title="对账与监控"
+          hint="节点每 15s 拉取挂单/持仓，与本地账本比对；critical 会自动挂 KILL 开关"
+          right={<Badge tone={criticalAlerts.length > 0 ? 'down' : warnAlerts.length > 0 ? 'warn' : 'up'}>
+            {criticalAlerts.length > 0 ? `${criticalAlerts.length} 条 critical` : warnAlerts.length > 0 ? `${warnAlerts.length} 条 warn` : '全部正常'}
+          </Badge>}
+        />
+        {alerts.length === 0 ? (
+          <p className="py-4 text-center text-[12px] text-faint">最近没有对账告警</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left text-[12px]">
+              <thead className="text-[10.5px] uppercase tracking-[0.1em] text-faint">
+                <tr className="border-b border-line-soft">
+                  <th className="py-2 pr-3">时间</th>
+                  <th className="py-2 pr-3">级别</th>
+                  <th className="py-2 pr-3">类型</th>
+                  <th className="py-2 pr-3">说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alerts.slice(0, 10).map((row, index) => (
+                  <tr key={`${row.ts}-${index}`} className="border-b border-line-soft/60">
+                    <td className="py-2 pr-3 text-[11px] text-faint">{stamp(row.ts * 1000)}</td>
+                    <td className="py-2 pr-3">
+                      <Badge tone={row.level === 'critical' ? 'down' : row.level === 'warn' ? 'warn' : 'neutral'}>
+                        {row.level}
+                      </Badge>
+                    </td>
+                    <td className="py-2 pr-3 font-mono">{row.kind}</td>
+                    <td className="py-2 pr-3">{row.message}</td>
                   </tr>
                 ))}
               </tbody>

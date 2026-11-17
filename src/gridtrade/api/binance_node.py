@@ -106,3 +106,7 @@ class BinanceNodeClient:
         if symbol:
             params["symbol"] = symbol.upper()
         return self._get("/orders", params)
+
+    def alerts(self, limit: int = 20) -> dict[str, Any]:
+        """Recent reconciliation alerts from the node (may be empty)."""
+        return self._get("/alerts", {"limit": limit})
