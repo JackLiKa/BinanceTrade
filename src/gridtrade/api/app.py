@@ -38,6 +38,7 @@ from ..strategy.grid import GridParams
 from .config import LiveConfig, Settings
 from .jobs import JobQueue
 from .live import LiveMarket
+from .admin import ADMIN_COOKIE, SESSION_TTL, AdminError, AdminService, AdminAuth
 from .live_gate import LiveError, LiveService, write_env_file
 from .paper import PaperEngine
 from .service import INTERVALS, ResearchService
@@ -209,6 +210,45 @@ class LiveOrderRequest(BaseModel):
     reduce_only: bool = False
 
 
+class AdminLoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AdminLiveRequest(BaseModel):
+    api_key: str | None = None
+    api_secret: str | None = None
+    enabled: bool | None = None
+    trading_enabled: bool | None = None
+    confirm_trading: bool = False
+    clear_credentials: bool = False
+    max_notional: float | None = Field(None, gt=0)
+    max_order_notional: float | None = Field(None, gt=0)
+    max_position_notional: float | None = Field(None, gt=0)
+    max_open_orders: int | None = Field(None, ge=1, le=500)
+
+
+class AdminPaperRequest(BaseModel):
+    symbols: list[str] | None = None
+    capital: float | None = Field(None, gt=0)
+    leverage: float | None = Field(None, gt=0)
+    spacing_bp: float | None = Field(None, gt=0)
+    levels: int | None = Field(None, ge=1, le=500)
+    stop_dd_pct: float | None = Field(None, ge=0, le=100)
+    maker_fee_bp: float | None = Field(None, ge=0, le=200)
+    taker_fee_bp: float | None = Field(None, ge=0, le=500)
+    poll_seconds: float | None = Field(None, ge=1, le=600)
+
+
+class AdminActionRequest(BaseModel):
+    action: str = Field(pattern="^(start|stop|reset)$")
+
+
+class AdminPasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=5, max_length=128)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = Store(settings.var_dir / "gridtrade.db")
@@ -217,6 +257,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     jobs = JobQueue(store, workers=2)
     paper = PaperEngine(settings.paper, settings.var_dir)
     live_service = LiveService(settings.live, env_path=settings.env_path)
+    admin_service = AdminService(settings, store, live_service, paper)
     started_at = time.time()
 
     @asynccontextmanager
@@ -310,6 +351,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return candidate
 
     guarded = [Depends(require_token)]
+
+    def admin_token(request: Request) -> str:
+        return request.cookies.get(ADMIN_COOKIE, "")
+
+    def require_admin(request: Request) -> None:
+        if not admin_service.auth.check(admin_token(request)):
+            raise HTTPException(status_code=401, detail="管理员未登录或会话已过期")
+
+    admin_guarded = [Depends(require_admin)]
+
+    def admin_http(exc: AdminError) -> HTTPException:
+        return HTTPException(status_code=exc.status_code, detail=str(exc))
 
     @app.get("/api/health", tags=["system"])
     async def health() -> dict[str, Any]:
@@ -532,6 +585,104 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"canceled": canceled, "run": run}
 
     # -- risk, settings, audit -------------------------------------------
+
+    # -- standalone admin console -----------------------------------------
+
+    @app.post("/api/admin/login", tags=["admin"])
+    async def admin_login(payload: AdminLoginRequest, request: Request, response: Response) -> dict[str, Any]:
+        client = request.client.host if request.client else ""
+        try:
+            session = admin_service.auth.login(payload.username, payload.password, client=client)
+        except AdminError as exc:
+            store.audit("admin.login_failed", payload.username[:32], actor="admin")
+            raise admin_http(exc) from exc
+        response.set_cookie(
+            ADMIN_COOKIE,
+            session,
+            max_age=SESSION_TTL,
+            httponly=True,
+            samesite="strict",
+            secure=settings.secure_cookie,
+            path="/",
+        )
+        store.audit("admin.login", payload.username[:32], actor="admin")
+        return {"ok": True, "default_password": admin_service.auth.default_password()}
+
+    @app.post("/api/admin/logout", dependencies=admin_guarded)
+    async def admin_logout(request: Request, response: Response) -> dict[str, Any]:
+        admin_service.auth.logout(admin_token(request))
+        response.delete_cookie(ADMIN_COOKIE, path="/")
+        return {"ok": True}
+
+    @app.get("/api/admin/me", dependencies=admin_guarded)
+    async def admin_me() -> dict[str, Any]:
+        return {
+            "username": admin_service.auth.username(),
+            "default_password": admin_service.auth.default_password(),
+        }
+
+    @app.get("/api/admin/overview", dependencies=admin_guarded)
+    async def admin_overview() -> dict[str, Any]:
+        return await asyncio.to_thread(admin_service.overview)
+
+    @app.get("/api/admin/audit", dependencies=admin_guarded)
+    async def admin_audit(limit: int = Query(100, ge=1, le=500)) -> dict[str, Any]:
+        return {"entries": await asyncio.to_thread(store.list_audit, limit=limit)}
+
+    @app.post("/api/admin/live", dependencies=admin_guarded)
+    async def admin_live(payload: AdminLiveRequest) -> dict[str, Any]:
+        try:
+            config = await asyncio.to_thread(
+                admin_service.save_live, payload.model_dump(exclude_none=True)
+            )
+        except AdminError as exc:
+            raise admin_http(exc) from exc
+        return {"config": config}
+
+    @app.post("/api/admin/paper", dependencies=admin_guarded)
+    async def admin_paper(payload: AdminPaperRequest) -> dict[str, Any]:
+        try:
+            result = await asyncio.to_thread(
+                admin_service.save_paper, payload.model_dump(exclude_none=True)
+            )
+        except AdminError as exc:
+            raise admin_http(exc) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"模拟盘配置失败: {exc}") from exc
+        return result
+
+    @app.post("/api/admin/paper/action", dependencies=admin_guarded)
+    async def admin_paper_action(payload: AdminActionRequest) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(admin_service.paper_action, payload.action)
+        except AdminError as exc:
+            raise admin_http(exc) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"模拟盘操作失败: {exc}") from exc
+
+    @app.post("/api/admin/token/rotate", dependencies=admin_guarded)
+    async def admin_rotate_token() -> dict[str, Any]:
+        return await asyncio.to_thread(admin_service.rotate_token)
+
+    @app.post("/api/admin/password", dependencies=admin_guarded)
+    async def admin_password(payload: AdminPasswordRequest, request: Request) -> dict[str, Any]:
+        try:
+            await asyncio.to_thread(
+                admin_service.change_password,
+                admin_token(request),
+                payload.current_password,
+                payload.new_password,
+            )
+        except AdminError as exc:
+            raise admin_http(exc) from exc
+        return {"ok": True}
+
+    @app.get("/admin", include_in_schema=False)
+    async def admin_page() -> FileResponse:
+        page = settings.web_dir / "admin" / "index.html"
+        if not page.is_file():
+            raise HTTPException(status_code=404, detail="admin console not built")
+        return FileResponse(page, headers={"Cache-Control": "no-store"})
 
     # -- live trading (Gate private account; orders locked by default) ----
 

@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gridtrade 后台</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0e11; --panel: #151a21; --elev: #1c222b; --line: #2b3139;
+        --ink: #eaecef; --muted: #848e9c; --faint: #5e6673; --accent: #fcd535;
+        --up: #0ecb81; --down: #f6465d; --warn: #f0b90b;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.5 -apple-system, "Segoe UI", Roboto, "PingFang SC", sans-serif; }
+      a { color: var(--accent); }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+      .brand { display: flex; align-items: baseline; gap: 10px; }
+      .brand b { letter-spacing: .18em; font-size: 12px; color: var(--accent); }
+      .brand h1 { font-size: 20px; margin: 0; }
+      .muted { color: var(--muted); } .faint { color: var(--faint); }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+      .card h2 { font-size: 14px; margin: 0 0 4px; }
+      .card p.hint { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+      .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+      .stat { background: var(--elev); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+      .stat .k { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+      .stat .v { margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px; }
+      label { display: block; margin-bottom: 10px; }
+      label span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+      input[type=text], input[type=password], input[type=number] {
+        width: 100%; height: 36px; border-radius: 8px; border: 1px solid var(--line);
+        background: var(--elev); color: var(--ink); padding: 0 10px; font-family: ui-monospace, monospace;
+      }
+      input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+      .row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+      button { height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line);
+        background: var(--elev); color: var(--ink); cursor: pointer; font-size: 12px; }
+      button:hover { border-color: #3d444d; } button:disabled { opacity: .45; cursor: not-allowed; }
+      button.primary { background: var(--accent); color: #0b0e11; border-color: transparent; font-weight: 600; }
+      button.danger { background: #2a1216; color: var(--down); border-color: #5c2029; }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+      .banner { border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; font-size: 12px; }
+      .banner.warn { background: rgba(240,185,11,.1); border: 1px solid rgba(240,185,11,.35); color: var(--warn); }
+      .banner.err { background: rgba(246,70,93,.1); border: 1px solid rgba(246,70,93,.35); color: var(--down); }
+      .banner.ok { background: rgba(14,203,129,.1); border: 1px solid rgba(14,203,129,.35); color: var(--up); }
+      table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+      th { color: var(--faint); font-size: 10px; text-transform: uppercase; }
+      td.mono, .mono { font-family: ui-monospace, monospace; }
+      .hidden { display: none !important; }
+      .login { max-width: 360px; margin: 12vh auto 0; }
+      .login h1 { font-size: 22px; margin: 0 0 6px; }
+      pre.token { background: #0d1117; border: 1px solid var(--line); padding: 10px; border-radius: 8px; overflow: auto; }
+      .switch { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+      .switch input { height: 16px; width: 16px; }
+      .toast { position: fixed; right: 16px; bottom: 16px; max-width: 420px; z-index: 10; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section id="loginView" class="login hidden">
+        <div class="card">
+          <div class="brand"><b>GRIDTRADE</b><h1>管理后台</h1></div>
+          <p class="hint">默认账号/密码：<span class="mono">admin / admin</span>（首次登录后请修改密码）。</p>
+          <div id="loginError" class="banner err hidden"></div>
+          <label><span>账号</span><input id="username" type="text" autocomplete="username" value="admin" /></label>
+          <label><span>密码</span><input id="password" type="password" autocomplete="current-password" /></label>
+          <div class="actions"><button class="primary" id="loginBtn">登录</button></div>
+        </div>
+        <p class="faint">管理后台与面板令牌分离；请仅在内网/HTTPS 下使用。</p>
+      </section>
+
+      <section id="appView" class="hidden">
+        <header>
+          <div class="brand"><b>GRIDTRADE</b><h1>管理后台</h1></div>
+          <div class="actions">
+            <span id="who" class="muted"></span>
+            <button id="refreshBtn">刷新</button>
+            <button id="logoutBtn">退出</button>
+          </div>
+        </header>
+        <div id="passwordBanner" class="banner warn hidden">当前仍是默认密码 admin，请到「安全」修改。</div>
+        <div id="globalMsg" class="banner hidden"></div>
+
+        <div class="card">
+          <h2>概览</h2>
+          <p class="hint" id="envPath">—</p>
+          <div class="grid" id="overviewStats"></div>
+        </div>
+
+        <div class="card">
+          <h2>实盘配置（Gate）</h2>
+          <p class="hint">写入服务器 .env，只回显 Key 后四位；下单默认锁定。</p>
+          <div class="row">
+            <label><span>API Key（留空不改）</span><input id="apiKey" type="text" autocomplete="off" /></label>
+            <label><span>API Secret（留空不改）</span><input id="apiSecret" type="password" autocomplete="new-password" /></label>
+          </div>
+          <div class="row">
+            <label><span>总名义上限 USDT</span><input id="maxNotional" type="number" step="100" /></label>
+            <label><span>单笔上限 USDT</span><input id="maxOrderNotional" type="number" step="100" /></label>
+            <label><span>单标的上限 USDT</span><input id="maxPositionNotional" type="number" step="100" /></label>
+            <label><span>最大挂单数</span><input id="maxOpenOrders" type="number" step="1" /></label>
+          </div>
+          <div class="switch" style="margin:6px 0 12px"><input id="liveEnabled" type="checkbox" /><label for="liveEnabled" style="margin:0">启用实盘账户同步</label></div>
+          <div class="switch" style="margin:6px 0 12px"><input id="tradingEnabled" type="checkbox" /><label for="tradingEnabled" style="margin:0">允许实盘下单（需勾选确认）</label></div>
+          <div class="switch" style="margin:6px 0 12px"><input id="confirmTrading" type="checkbox" /><label for="confirmTrading" style="margin:0">我确认开启后会发送真实订单</label></div>
+          <div class="actions">
+            <button class="primary" id="saveLiveBtn">保存实盘配置</button>
+            <button class="danger" id="clearLiveBtn">清除凭据</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>模拟盘配置</h2>
+          <p class="hint">保存后会重置模拟盘账户（清空成交/权益并从当前标记价重新锚定）。</p>
+          <label><span>标的（Gate 合约名，逗号分隔）</span><input id="paperSymbols" type="text" /></label>
+          <div class="row">
+            <label><span>本金 USDT</span><input id="paperCapital" type="number" step="100" /></label>
+            <label><span>杠杆</span><input id="paperLeverage" type="number" step="0.1" /></label>
+            <label><span>网格间距 bp</span><input id="paperSpacing" type="number" step="0.5" /></label>
+            <label><span>层数</span><input id="paperLevels" type="number" step="1" /></label>
+            <label><span>止损回撤 %</span><input id="paperStop" type="number" step="0.5" /></label>
+          </div>
+          <div class="actions">
+            <button class="primary" id="savePaperBtn">保存并重置</button>
+            <button id="paperStartBtn">启动</button>
+            <button id="paperStopBtn">停止</button>
+            <button id="paperResetBtn">仅重置</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>安全</h2>
+          <p class="hint">面板令牌用于浏览器/APK；轮换后需要重新登录面板并重打包 APK。</p>
+          <div class="actions">
+            <button id="rotateTokenBtn">轮换面板令牌</button>
+          </div>
+          <pre id="newToken" class="token hidden"></pre>
+          <hr style="border:none;border-top:1px solid var(--line);margin:16px 0" />
+          <div class="row">
+            <label><span>当前密码</span><input id="currentPassword" type="password" autocomplete="current-password" /></label>
+            <label><span>新密码（至少 5 位，不能是 admin）</span><input id="newPassword" type="password" autocomplete="new-password" /></label>
+          </div>
+          <div class="actions"><button class="primary" id="passwordBtn">修改密码</button></div>
+        </div>
+
+        <div class="card">
+          <h2>审计日志</h2>
+          <div style="max-height:320px;overflow:auto">
+            <table><thead><tr><th>时间</th><th>动作</th><th>详情</th></tr></thead><tbody id="auditRows"></tbody></table>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div id="toast" class="toast"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const state = { overview: null };
+      const toast = (text, tone = 'ok') => {
+        const el = document.createElement('div');
+        el.className = 'banner ' + tone;
+        el.textContent = text;
+        $('toast').appendChild(el);
+        setTimeout(() => el.remove(), 5000);
+      };
+      const api = async (path, options = {}) => {
+        const response = await fetch(path, {
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          ...options,
+        });
+        let data = {};
+        try { data = await response.json(); } catch (_) {}
+        if (!response.ok) throw new Error(data.detail || ('HTTP ' + response.status));
+        return data;
+      };
+      const showLogin = () => { $('loginView').classList.remove('hidden'); $('appView').classList.add('hidden'); };
+      const showApp = () => { $('loginView').classList.add('hidden'); $('appView').classList.remove('hidden'); };
+
+      const login = async () => {
+        try {
+          const result = await api('/api/admin/login', {
+            method: 'POST',
+            body: JSON.stringify({ username: $('username').value, password: $('password').value }),
+          });
+          $('loginError').classList.add('hidden');
+          await boot();
+          if (result.default_password) toast('已登录；请尽快修改默认密码', 'warn');
+          else toast('已登录');
+        } catch (err) {
+          $('loginError').textContent = err.message;
+          $('loginError').classList.remove('hidden');
+        }
+      };
+
+      const renderOverview = (data) => {
+        state.overview = data;
+        $('envPath').textContent = '部署 .env：' + data.env_path + ' · 面板令牌 ' + data.token_hint;
+        $('passwordBanner').classList.toggle('hidden', !data.default_password);
+        $('who').textContent = data.admin_username;
+        $('overviewStats').innerHTML = [
+          ['模拟盘状态', data.paper.status || '—'],
+          ['模拟盘权益', '$' + Number(data.paper.equity || 0).toFixed(2)],
+          ['标的数', (data.paper.symbols || []).length],
+          ['实盘同步', data.live.enabled ? '已启用' : '未启用'],
+          ['实盘凭据', data.live.configured ? '已配置 ' + data.live.api_key_hint : '未配置'],
+          ['实盘下单', data.live.trading_enabled ? '已解锁' : '锁定'],
+        ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+        const live = data.live;
+        $('liveEnabled').checked = !!live.enabled;
+        $('tradingEnabled').checked = !!live.trading_enabled;
+        $('maxNotional').value = live.max_notional;
+        $('maxOrderNotional').value = live.max_order_notional;
+        $('maxPositionNotional').value = live.max_position_notional;
+        $('maxOpenOrders').value = live.max_open_orders;
+        const paper = data.paper.config || {};
+        $('paperSymbols').value = (data.paper.symbols || []).join(', ');
+        $('paperCapital').value = paper.capital ?? '';
+        $('paperLeverage').value = paper.leverage ?? '';
+        $('paperSpacing').value = paper.spacing_bp ?? '';
+        $('paperLevels').value = paper.levels ?? '';
+        $('paperStop').value = paper.stop_dd_pct ?? '';
+
+        $('auditRows').innerHTML = (data.audit || []).map((row) =>
+          `<tr><td class="mono">${row.ts || ''}</td><td>${row.action || ''}</td><td>${(row.detail || '').replace(/</g, '&lt;')}</td></tr>`
+        ).join('') || '<tr><td colspan="3" class="faint">暂无记录</td></tr>';
+      };
+
+      const loadOverview = async () => {
+        try {
+          renderOverview(await api('/api/admin/overview'));
+        } catch (err) {
+          if (String(err.message).includes('登录')) showLogin();
+          else toast(err.message, 'err');
+        }
+      };
+
+      const boot = async () => {
+        try {
+          const me = await api('/api/admin/me');
+          showApp();
+          $('who').textContent = me.username;
+          await loadOverview();
+        } catch (_) { showLogin(); }
+      };
+
+      const saveLive = async () => {
+        const payload = {
+          enabled: $('liveEnabled').checked,
+          trading_enabled: $('tradingEnabled').checked,
+          confirm_trading: $('confirmTrading').checked,
+          max_notional: Number($('maxNotional').value),
+          max_order_notional: Number($('maxOrderNotional').value),
+          max_position_notional: Number($('maxPositionNotional').value),
+          max_open_orders: Number($('maxOpenOrders').value),
+        };
+        if ($('apiKey').value.trim()) payload.api_key = $('apiKey').value.trim();
+        if ($('apiSecret').value.trim()) payload.api_secret = $('apiSecret').value.trim();
+        try {
+          await api('/api/admin/live', { method: 'POST', body: JSON.stringify(payload) });
+          $('apiKey').value = ''; $('apiSecret').value = ''; $('confirmTrading').checked = false;
+          toast('实盘配置已保存到 .env');
+          await loadOverview();
+        } catch (err) { toast(err.message, 'err'); }
+      };
+
+      const savePaper = async () => {
+        const payload = {
+          symbols: $('paperSymbols').value.split(',').map((s) => s.trim()).filter(Boolean),
+          capital: Number($('paperCapital').value),
+          leverage: Number($('paperLeverage').value),
+          spacing_bp: Number($('paperSpacing').value),
+          levels: Number($('paperLevels').value),
+          stop_dd_pct: Number($('paperStop').value),
+        };
+        try {
+          await api('/api/admin/paper', { method: 'POST', body: JSON.stringify(payload) });
+          toast('模拟盘配置已保存并重置');
+          await loadOverview();
+        } catch (err) { toast(err.message, 'err'); }
+      };
+
+      const paperAction = async (action) => {
+        try {
+          await api('/api/admin/paper/action', { method: 'POST', body: JSON.stringify({ action }) });
+          toast('模拟盘：' + action);
+          await loadOverview();
+        } catch (err) { toast(err.message, 'err'); }
+      };
+
+      const rotateToken = async () => {
+        if (!window.confirm('轮换后面板/浏览器/APK 的旧令牌立即失效，APK 需要重新打包。继续？')) return;
+        try {
+          const result = await api('/api/admin/token/rotate', { method: 'POST' });
+          const box = $('newToken');
+          box.textContent = '新令牌（只显示一次）：\n' + result.token;
+          box.classList.remove('hidden');
+          toast('令牌已轮换，请更新 APK 与浏览器登录', 'warn');
+          await loadOverview();
+        } catch (err) { toast(err.message, 'err'); }
+      };
+
+      const changePassword = async () => {
+        try {
+          await api('/api/admin/password', {
+            method: 'POST',
+            body: JSON.stringify({ current_password: $('currentPassword').value, new_password: $('newPassword').value }),
+          });
+          $('currentPassword').value = ''; $('newPassword').value = '';
+          toast('密码已修改');
+          await loadOverview();
+        } catch (err) { toast(err.message, 'err'); }
+      };
+
+      $('loginBtn').onclick = login;
+      $('password').onkeydown = (event) => { if (event.key === 'Enter') login(); };
+      $('logoutBtn').onclick = async () => { try { await api('/api/admin/logout', { method: 'POST' }); } catch (_) {} showLogin(); };
+      $('refreshBtn').onclick = loadOverview;
+      $('saveLiveBtn').onclick = saveLive;
+      $('clearLiveBtn').onclick = async () => {
+        if (!window.confirm('清除服务器 .env 中的 Gate 凭据？')) return;
+        try {
+          await api('/api/admin/live', { method: 'POST', body: JSON.stringify({ clear_credentials: true, enabled: false, trading_enabled: false }) });
+          toast('凭据已清除'); await loadOverview();
+        } catch (err) { toast(err.message, 'err'); }
+      };
+      $('savePaperBtn').onclick = savePaper;
+      $('paperStartBtn').onclick = () => paperAction('start');
+      $('paperStopBtn').onclick = () => paperAction('stop');
+      $('paperResetBtn').onclick = () => paperAction('reset');
+      $('rotateTokenBtn').onclick = rotateToken;
+      $('passwordBtn').onclick = changePassword;
+
+      boot();
+      setInterval(() => { if (!$('appView').classList.contains('hidden')) loadOverview(); }, 15000);
+    </script>
+  </body>
+</html>

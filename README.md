@@ -237,6 +237,15 @@ cp apk/.env.example apk/.env
 | ![更多抽屉](docs/screens/02-more.png) | ![回测](docs/screens/04-backtest.png) |
 | ![月度归因](docs/screens/04e-monthly.png) | ![风控](docs/screens/07-risk.png) |
 
+## 管理后台
+
+独立后台地址：`/admin`（与面板令牌分离，使用账号密码登录）。
+
+- 默认账号/密码：`admin / admin`（首次登录后请立即在“安全”里修改）。
+- 功能：概览（模拟盘/实盘状态）、Gate 实盘凭据与风控上限、模拟盘标的与参数、启动/停止/重置、轮换面板令牌、修改密码、审计日志。
+- 凭据写服务器 `.env`；管理员密码以 PBKDF2 哈希存在 `var/admin.db`，不在 `.env` 中。
+- **安全提示**：后台走 HTTP 时密码是明文传输，建议尽快配 HTTPS；默认密码务必修改。
+
 ## 开发交接与记忆文档
 
 换一台电脑继续开发时，先读 [docs/memory/README.md](docs/memory/README.md)。其中包含：
@@ -256,7 +265,7 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 68 项
+.venv/bin/python -m pytest            # 74 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 
