@@ -807,6 +807,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def paper_state() -> dict[str, Any]:
         return await asyncio.to_thread(paper.snapshot)
 
+    @app.get("/api/paper/runs", dependencies=guarded)
+    async def paper_runs(limit: int = Query(30, ge=1, le=200)) -> dict[str, Any]:
+        "已归档的模拟盘运行摘要（reset / 止损时写入），用于复盘。"
+        return {"runs": await asyncio.to_thread(paper.runs, limit)}
+
     @app.post("/api/paper/start", dependencies=guarded)
     async def paper_start(payload: PaperStartRequest) -> dict[str, Any]:
         overrides = payload.config.model_dump(exclude_none=True) if payload.config else None

@@ -32,6 +32,7 @@ BINANCE_FAPI = {
     "/fapi/v1/income": "Binance USDⓈ-M Futures · Get Income History",
     "/fapi/v1/userTrades": "Binance USDⓈ-M Futures · Account Trade List",
     "/fapi/v1/positionSide/dual": "Binance USDⓈ-M Futures · Get Current Position Mode",
+    "/fapi/v1/commissionRate": "Binance USDⓈ-M Futures · User Commission Rate",
     # signed trading (locked behind BINANCE_TRADING + kill switch + confirm)
     "/fapi/v1/order": "Binance USDⓈ-M Futures · New/Query/Cancel Order",
     "/fapi/v1/allOpenOrders": "Binance USDⓈ-M Futures · Cancel All Open Orders",

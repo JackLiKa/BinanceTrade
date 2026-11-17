@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Play, RotateCcw, Square } from 'lucide-react'
-import { api, type PaperConfigInput, type PaperState } from '../api'
+import { api, type PaperConfigInput, type PaperRun, type PaperState } from '../api'
 import { EquityChart } from '../components/charts'
 import { NumberInput } from '../components/inputs'
 import { Badge, Button, Card, CardHead, Empty, ErrorNote, Field, Skeleton, Stat } from '../components/ui'
@@ -48,8 +48,20 @@ export function Paper() {
   const [busy, setBusy] = useState<string | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [runs, setRuns] = useState<PaperRun[]>([])
 
   const data = state.data
+
+  const loadRuns = () => {
+    api
+      .paperRuns(30)
+      .then((payload) => setRuns(payload.runs))
+      .catch(() => setRuns([]))
+  }
+
+  useEffect(() => {
+    loadRuns()
+  }, [])
 
   useEffect(() => {
     if (!data || ready) return
@@ -219,6 +231,54 @@ export function Paper() {
         ) : null}
         {data.last_error ? <div className="mt-3"><ErrorNote>{data.last_error}</ErrorNote></div> : null}
         {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}
+      </Card>
+
+      <Card>
+        <CardHead
+          title="历史运行"
+          hint="每次 reset 或触发止损都会归档摘要，便于复盘对比参数。"
+          right={<Button variant="ghost" onClick={loadRuns}>刷新</Button>}
+        />
+        {runs.length === 0 ? (
+          <p className="py-4 text-center text-[12px] text-muted">暂无归档运行</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-left text-[11.5px]">
+              <thead className="text-[10px] uppercase tracking-wider text-faint">
+                <tr className="border-b border-line-soft">
+                  <th className="py-2 pr-3">结束时间</th>
+                  <th className="py-2 pr-3">原因</th>
+                  <th className="py-2 pr-3">参数</th>
+                  <th className="py-2 pr-3 text-right">收益</th>
+                  <th className="py-2 pr-3 text-right">回撤</th>
+                  <th className="py-2 pr-3 text-right">手续费</th>
+                  <th className="py-2 pr-3 text-right">资金费</th>
+                  <th className="py-2 pr-3 text-right">滑点</th>
+                  <th className="py-2 pr-3 text-right">成交</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((run) => (
+                  <tr key={run.id} className="border-b border-line-soft/60">
+                    <td className="py-2 pr-3 font-mono text-[10.5px] text-muted">{fmtTime(run.ended_at)}</td>
+                    <td className="py-2 pr-3">{run.reason === 'stop' ? '止损' : run.reason === 'reset' ? '重置' : run.reason}</td>
+                    <td className="py-2 pr-3 font-mono text-[10.5px] text-muted">
+                      {Number(run.config?.leverage ?? 0)}x · {Number(run.config?.spacing_bp ?? 0)}bp · {Number(run.config?.levels ?? 0)}层 · 止损{Number(run.config?.stop_dd_pct ?? 0)}%
+                    </td>
+                    <td className={cx('py-2 pr-3 text-right font-mono', run.return_pct >= 0 ? 'text-up' : 'text-down')}>
+                      {fmtPct(run.return_pct)}
+                    </td>
+                    <td className="py-2 pr-3 text-right font-mono text-muted">{fmtPct(run.max_dd_pct)}</td>
+                    <td className="py-2 pr-3 text-right font-mono text-muted">{fmtMoney(run.fees, 3)}</td>
+                    <td className="py-2 pr-3 text-right font-mono text-muted">{fmtMoney(run.funding, 3)}</td>
+                    <td className="py-2 pr-3 text-right font-mono text-muted">{fmtMoney(run.slippage, 3)}</td>
+                    <td className="py-2 pr-3 text-right font-mono text-muted">{run.fills}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       <Card pad={false}>

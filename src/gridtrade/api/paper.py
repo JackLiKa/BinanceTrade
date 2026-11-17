@@ -124,6 +124,23 @@ CREATE TABLE IF NOT EXISTS paper_funding (
     position REAL NOT NULL,
     mark REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS paper_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT,
+    ended_at TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    capital REAL NOT NULL DEFAULT 0,
+    equity REAL NOT NULL DEFAULT 0,
+    return_pct REAL NOT NULL DEFAULT 0,
+    max_dd_pct REAL NOT NULL DEFAULT 0,
+    fees REAL NOT NULL DEFAULT 0,
+    funding REAL NOT NULL DEFAULT 0,
+    slippage REAL NOT NULL DEFAULT 0,
+    fills INTEGER NOT NULL DEFAULT 0,
+    config TEXT NOT NULL DEFAULT '{}'
+);
 """
 
 
@@ -364,6 +381,7 @@ class PaperEngine:
             feed.close()
 
     def reset(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._archive_run("reset")
         if self.status == "running":
             self.stop()
         with self._lock:
@@ -596,6 +614,7 @@ class PaperEngine:
         self.last_error = f"组合回撤触发 {limit:g}% 止损，已全部平仓并暂停"
         self._mark_equity()
         self._stop.set()
+        self._archive_run("stop")
 
     def _snapshot_if_due(self, now: float) -> None:
         if now - self._last_snapshot < 15:
@@ -681,6 +700,59 @@ class PaperEngine:
         self._save()
 
     # -- persistence -----------------------------------------------------
+
+    def _archive_run(self, reason: str) -> None:
+        """Persist a summary of the current run so resets never lose history."""
+        if not self.started_at:
+            return
+        account = self.account
+        capital = float(self.config.capital) or 1.0
+        peak = float(account.peak_equity) or capital
+        drawdown = max(0.0, (peak - self.equity) / peak * 100) if peak > 0 else 0.0
+        try:
+            with self._connect() as conn:
+                fills = conn.execute("SELECT COUNT(*) FROM paper_fills").fetchone()[0]
+                conn.execute(
+                    "INSERT INTO paper_runs (started_at, ended_at, reason, status, capital,"
+                    " equity, return_pct, max_dd_pct, fees, funding, slippage, fills, config)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        self.started_at,
+                        _iso(time.time()),
+                        reason,
+                        self.status,
+                        float(self.config.capital),
+                        round(self.equity, 6),
+                        round((self.equity / capital - 1) * 100, 4),
+                        round(drawdown, 4),
+                        round(account.fees, 8),
+                        round(account.funding, 8),
+                        round(account.slippage, 8),
+                        int(fills),
+                        json.dumps(asdict(self.config), sort_keys=True),
+                    ),
+                )
+        except Exception:  # noqa: BLE001 - archiving must never break trading
+            self.last_error = "run archive failed"
+
+    def runs(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Archived run summaries, newest first, for post-hoc review."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM paper_runs ORDER BY id DESC LIMIT ?", (int(limit),)
+                ).fetchall()
+        except Exception:  # noqa: BLE001
+            return []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["config"] = json.loads(item.get("config") or "{}")
+            except ValueError:
+                item["config"] = {}
+            out.append(item)
+        return out
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=10)

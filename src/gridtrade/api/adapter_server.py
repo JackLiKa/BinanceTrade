@@ -105,6 +105,13 @@ class Handler(BaseHTTPRequestHandler):
                         }
                     self._send(HTTPStatus.OK, payload)
                     return
+                if route == "/cost":
+                    sym = (symbol or "DOGEUSDT").upper()
+                    self._send(
+                        HTTPStatus.OK,
+                        {"ok": True, "symbol": sym, **client.cost_report(symbol=sym)},
+                    )
+                    return
                 if route == "/alerts":
                     recon = _recon()
                     if recon is None:

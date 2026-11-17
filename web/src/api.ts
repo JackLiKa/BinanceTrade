@@ -215,6 +215,23 @@ export interface PaperState {
   cost?: BinanceCostReport
 }
 
+export interface PaperRun {
+  id: number
+  started_at: string | null
+  ended_at: string
+  reason: string
+  status: string
+  capital: number
+  equity: number
+  return_pct: number
+  max_dd_pct: number
+  fees: number
+  funding: number
+  slippage: number
+  fills: number
+  config: Record<string, unknown>
+}
+
 export interface PaperConfigInput {
   symbols?: string[]
   capital?: number
@@ -872,6 +889,8 @@ export const api = {
 
   paperReset: (config?: PaperConfigInput) =>
     request<PaperState>('/api/paper/reset', json(config ?? {})),
+
+  paperRuns: (limit = 30) => request<{ runs: PaperRun[] }>(`/api/paper/runs?limit=${limit}`),
 
   live: (refresh = false) => request<LiveSnapshot>(`/api/live${refresh ? '?refresh=1' : ''}`),
 

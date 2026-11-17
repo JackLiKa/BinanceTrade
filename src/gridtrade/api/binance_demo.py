@@ -630,6 +630,18 @@ class BinanceDemoClient:
             params["symbol"] = symbol.strip().upper()
         return _as_list(self._request("GET", "/fapi/v1/userTrades", params, signed=True))
 
+    def commission_rate(self, symbol: str) -> dict[str, Any]:
+        """``GET /fapi/v1/commissionRate``: this account's real maker/taker fee."""
+        params = {"symbol": symbol.strip().upper()}
+        return _as_dict(
+            self._request("GET", "/fapi/v1/commissionRate", params, signed=True)
+        )
+
+    def premium_index(self, symbol: str) -> dict[str, Any]:
+        """``GET /fapi/v1/premiumIndex``: mark price + current funding rate (public)."""
+        params = {"symbol": symbol.strip().upper()}
+        return _as_dict(self._request("GET", "/fapi/v1/premiumIndex", params))
+
     def dual_side_position(self) -> bool:
         """``GET /fapi/v1/positionSide/dual``: hedge (dual-side) mode flag.
 
@@ -857,12 +869,17 @@ class BinanceDemoClient:
 
     # -- status ----------------------------------------------------------
 
-    def cost_report(self, spacing_bp: float | None = None) -> dict[str, Any]:
+    def cost_report(
+        self, spacing_bp: float | None = None, symbol: str | None = None
+    ) -> dict[str, Any]:
         """Expected round-trip cost for this account's fee assumptions.
 
         Real fees always come from the exchange fills (``commission``); this is
         the *planning* estimate used to sanity-check a grid spacing before it is
         deployed. ``spacing_bp`` fills in ``net_edge_bp`` / ``is_profitable``.
+        With ``symbol`` the account's **actual** maker/taker rates
+        (``/fapi/v1/commissionRate``) and the live funding rate
+        (``/fapi/v1/premiumIndex``) replace the configured assumptions.
         """
         model = CostModel(
             maker_fee_bp=self.cfg.maker_fee_bp,
@@ -875,6 +892,39 @@ class BinanceDemoClient:
             "taker_fee_bp": self.cfg.taker_fee_bp,
             "slippage_bp": self.cfg.slippage_bp,
         }
+        if symbol:
+            try:
+                rates = self.commission_rate(symbol)
+                premium = self.premium_index(symbol)
+                maker_bp = _opt_float(rates.get("makerCommissionRate"))
+                taker_bp = _opt_float(rates.get("takerCommissionRate"))
+                funding = _opt_float(premium.get("lastFundingRate"))
+                real_model = CostModel(
+                    maker_fee_bp=(maker_bp * 1e4) if maker_bp is not None else self.cfg.maker_fee_bp,
+                    taker_fee_bp=(taker_bp * 1e4) if taker_bp is not None else self.cfg.taker_fee_bp,
+                    slippage_bp=self.cfg.slippage_bp,
+                    funding_rate_8h=funding if funding is not None else 0.0,
+                    funding_interval_h=8.0,
+                )
+                out["actual"] = {
+                    "symbol": symbol.strip().upper(),
+                    "maker_fee_bp": maker_bp * 1e4 if maker_bp is not None else None,
+                    "taker_fee_bp": taker_bp * 1e4 if taker_bp is not None else None,
+                    "funding_rate_8h": funding,
+                    "funding_bp_per_8h": (funding * 1e4) if funding is not None else None,
+                    "round_trip_maker_bp": real_model.round_trip_bp(entry_taker=False, exit_taker=False),
+                    "round_trip_taker_bp": real_model.round_trip_bp(entry_taker=True, exit_taker=True),
+                    "round_trip_taker_8h_bp": real_model.round_trip_bp(
+                        entry_taker=True, exit_taker=True, hold_hours=8.0
+                    ),
+                    "breakeven_spacing_bp": real_model.breakeven_spacing_bp(
+                        entry_taker=False, exit_taker=False
+                    ),
+                }
+                if maker_bp is not None and taker_bp is not None:
+                    model = real_model
+            except Exception as exc:  # noqa: BLE001 - real fees are best-effort
+                out["actual_error"] = str(exc)[:160]
         if spacing_bp is not None:
             out["spacing_bp"] = spacing_bp
             out["round_trip_bp"] = model.round_trip_bp(entry_taker=False, exit_taker=False)
