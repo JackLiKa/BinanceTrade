@@ -55,7 +55,7 @@ cd web && pnpm dev     # http://localhost:5173
 
 当前部署在 `http://81.71.71.131:8000`（systemd 常驻，令牌在服务器的 `var/token`）。
 该实例目前是明文 HTTP，仅建议临时使用；公网长期使用应加 HTTPS 反向代理，详见
-[docs/memory/03-部署与运维手册.md](docs/memory/03-部署与运维手册.md)。
+[docs/memory/07-部署与运维.md](docs/memory/07-部署与运维.md)。
 
 ### 登录
 
@@ -174,9 +174,10 @@ cp .env.example .env
 | POST | `/api/settings/kill-switch` | 触发/解除紧急停止 |
 | GET | `/api/settings` | 服务端设置 |
 | GET | `/api/audit` | 审计日志 |
-| WS | `/ws?token=` | 每 3 秒推送行情快照与任务状态 |
+| WS | `/ws?token=` | 每 3 秒推送一条行情快照（`type=market`）；**不含任务状态**，任务状态由前端轮询 `/api/runs/{id}` |
 
-交互式文档：`http://127.0.0.1:8000/docs`。
+交互式文档：`http://127.0.0.1:8000/api/docs`（Swagger UI）；OpenAPI schema 在 `/api/openapi.json`。
+注意 `/docs` 不是有效路径，它会落入 SPA 兜底返回 `index.html`。
 
 ## 研究数据
 
@@ -251,16 +252,20 @@ cp apk/.env.example apk/.env
 
 换一台电脑继续开发时，先读 [docs/memory/README.md](docs/memory/README.md)。其中包含：
 
-- [项目总览与架构](docs/memory/01-项目总览与架构.md)
-- [开发进度与变更记录](docs/memory/02-开发进度与变更记录.md)
-- [部署与运维手册](docs/memory/03-部署与运维手册.md)
-- [测试手册](docs/memory/04-测试手册.md)（桌面 Web 与真机 APK 的可复现步骤）
-- [问题与决策记录](docs/memory/05-问题与决策记录.md)
-- [下一步与待办](docs/memory/06-下一步与待办.md)
-- [外部接口清单与官方文档对照](docs/memory/07-外部接口清单与官方文档对照.md)
-- [对话与决策日志（2026-11-17）](docs/memory/08-对话与决策日志-2026-11-17.md)
-- [今日改动总览（2026-11-17）](docs/memory/09-今日改动总览-2026-11-17.md)
-- [记忆库原始笔记](docs/memory/vault/)
+- [01 项目总览](docs/memory/01-项目总览.md)
+- [02 后端架构与领域模型](docs/memory/02-后端架构与领域模型.md)
+- [03 接口参考](docs/memory/03-接口参考.md)
+- [04 配置与数据存储](docs/memory/04-配置与数据存储.md)
+- [05 模拟盘与实盘接入](docs/memory/05-模拟盘与实盘接入.md)
+- [06 前端与APK](docs/memory/06-前端与APK.md)
+- [07 部署与运维](docs/memory/07-部署与运维.md)
+- [08 测试与验收](docs/memory/08-测试与验收.md)（桌面 Web 与真机 APK 的可复现步骤）
+- [09 策略研究结论](docs/memory/09-策略研究结论.md)（**改策略前必读**）
+- [10 问题与决策记录](docs/memory/10-问题与决策记录.md)
+- [11 外部接口清单](docs/memory/11-外部接口清单.md)
+- [12 待办与路线图](docs/memory/12-待办与路线图.md)
+- [13 历史归档](docs/memory/13-历史归档.md)
+- [记忆库原始笔记索引](docs/memory/vault/README.md)
 
 仓库不包含令牌（`var/token`）、行情数据（`research/data/`）、签名密钥（`apk/*.jks`）
 与前端构建产物（`web/dist/`），恢复步骤见交接文档。
@@ -275,14 +280,15 @@ cd web && pnpm typecheck              # tsc --noEmit
 ## 有意为之的边界
 
 - **实盘下单默认锁定。** `MODES` 启用 `research`、`paper` 与 `live`（Gate 只读分析）；
-  下单总开关默认 0，未开启时所有下单/撤单请求返回 403。API 凭据只写入服务器 `.env`，
+  下单总开关默认 0，此时下单/撤单/平仓/杠杆一律被拒：**未启用实盘或未配置 Key 返回 409**，
+  **已启用但未解锁返回 403**（`POST /api/live/config` 不受此锁约束）。API 凭据只写入服务器 `.env`，
   页面只显示 Key 后四位，Secret 不回传。
 - 实时组合模拟盘使用 Gate.io USDT 永续公开行情与资金费率（服务器可访问），默认
   `SKHY_USDT / SPCX_USDT / GOOGL_USDT / AMGN_USDT`，共享一个保证金池，成交、手续费
   （取自合约 `maker_fee_rate/taker_fee_rate`）、资金费与组合权益写入 `var/paper.db`。
 - 实盘接入 Gate 私有只读接口做账户分析；下单代码完整但默认锁定（`GRIDTRADE_LIVE_TRADING=0`），
   未配置 Key 时不会发起任何私有写请求。所有外部接口见
-  [外部接口清单](docs/memory/07-外部接口清单与官方文档对照.md)。
+  [外部接口清单](docs/memory/11-外部接口清单.md)。
 - 单用户、单进程。写入通过锁串行化；SQLite 使用 WAL 模式与短连接。
 - 行情快照走币安公共 REST，失败时降级为 `source: "offline"`，而不是阻塞界面。
 - 模拟成交使用分钟 K 线的最高/最低价；资金费率按记录的资金事件扣缴，

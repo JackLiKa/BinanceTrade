@@ -1,6 +1,6 @@
 """Every external endpoint used by the app must be an official, documented one.
 
-The allowlist below mirrors ``docs/memory/07-外部接口清单与官方文档对照.md``.
+The allowlist below mirrors ``docs/memory/11-外部接口清单.md``.
 Adding a new exchange call without registering it here (and in that document)
 fails the suite, so "use the official API" stays enforced instead of aspirational.
 """
