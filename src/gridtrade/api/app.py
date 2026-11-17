@@ -13,7 +13,7 @@ import hmac
 import logging
 import time
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -34,9 +34,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ..research.runner import ResearchParams
 from ..strategy.grid import GridParams
-from .config import Settings
+from .config import LiveConfig, Settings
 from .jobs import JobQueue
 from .live import LiveMarket
+from .live_gate import LiveError, LiveService, write_env_file
 from .paper import PaperEngine
 from .service import INTERVALS, ResearchService
 from .store import Store
@@ -51,7 +52,12 @@ MODES = {
         "label": "模拟盘",
         "detail": "Gate 永续实时行情，网格纸面成交（含手续费与资金费）",
     },
-    "live": {"enabled": False, "locked": True, "label": "实盘", "detail": "未提供实盘适配器"},
+    "live": {
+        "enabled": True,
+        "locked": False,
+        "label": "实盘",
+        "detail": "Gate 实盘只读分析；下单受 .env 总开关与风控上限锁定",
+    },
 }
 
 log = logging.getLogger("gridtrade.api")
@@ -176,6 +182,32 @@ class PaperStartRequest(BaseModel):
     config: PaperConfigRequest | None = None
 
 
+class LiveConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None = Field(None, max_length=128)
+    api_secret: str | None = Field(None, max_length=128)
+    enabled: bool | None = None
+    trading_enabled: bool | None = None
+    confirm_trading: bool = False
+    subaccount: str | None = Field(None, max_length=64)
+    max_notional: float | None = Field(None, gt=0, le=10_000_000)
+    max_order_notional: float | None = Field(None, gt=0, le=10_000_000)
+    max_position_notional: float | None = Field(None, gt=0, le=10_000_000)
+    max_open_orders: int | None = Field(None, ge=1, le=500)
+    clear_credentials: bool = False
+
+
+class LiveOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract: str = Field(min_length=3, max_length=32)
+    size: int = Field(..., description="contracts; positive = long/buy, negative = short/sell")
+    price: str | None = None
+    tif: str = Field("gtc", pattern="^(gtc|ioc|poc|fok)$")
+    reduce_only: bool = False
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = Store(settings.var_dir / "gridtrade.db")
@@ -183,6 +215,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     service = ResearchService(settings.data_dir, live)
     jobs = JobQueue(store, workers=2)
     paper = PaperEngine(settings.paper, settings.var_dir)
+    live_service = LiveService(settings.live, env_path=settings.env_path)
     started_at = time.time()
 
     @asynccontextmanager
@@ -206,6 +239,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             jobs.stop()
             paper.close()
+            live_service.close()
             await live.close()
 
     app = FastAPI(
@@ -220,6 +254,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.service = service
     app.state.jobs = jobs
     app.state.paper = paper
+    app.state.live_service = live_service
 
     if settings.cors_origins:
         app.add_middleware(
@@ -495,6 +530,119 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"canceled": canceled, "run": run}
 
     # -- risk, settings, audit -------------------------------------------
+
+    # -- live trading (Gate private account; orders locked by default) ----
+
+    def live_call(fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except LiveError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    @app.get("/api/live", dependencies=guarded)
+    async def live_state(refresh: bool = False) -> dict[str, Any]:
+        return await asyncio.to_thread(live_service.snapshot, force=refresh)
+
+    @app.post("/api/live/sync", dependencies=guarded)
+    async def live_sync() -> dict[str, Any]:
+        return await asyncio.to_thread(live_service.snapshot, force=True)
+
+    @app.get("/api/live/config", dependencies=guarded)
+    async def live_config() -> dict[str, Any]:
+        return {"config": live_service.masked_config()}
+
+    @app.post("/api/live/config", dependencies=guarded)
+    async def live_save_config(payload: LiveConfigRequest) -> dict[str, Any]:
+        cfg: LiveConfig = settings.live
+        updates: dict[str, str | None] = {}
+        if payload.clear_credentials:
+            cfg = replace(cfg, api_key="", api_secret="")
+            updates["GATE_API_KEY"] = None
+            updates["GATE_API_SECRET"] = None
+        if payload.api_key is not None:
+            key = payload.api_key.strip()
+            cfg = replace(cfg, api_key=key)
+            updates["GATE_API_KEY"] = key or None
+        if payload.api_secret is not None:
+            secret = payload.api_secret.strip()
+            cfg = replace(cfg, api_secret=secret)
+            updates["GATE_API_SECRET"] = secret or None
+        if payload.subaccount is not None:
+            cfg = replace(cfg, subaccount=payload.subaccount.strip())
+            updates["GRIDTRADE_LIVE_SUBACCOUNT"] = cfg.subaccount or None
+        if payload.max_notional is not None:
+            cfg = replace(cfg, max_notional=payload.max_notional)
+            updates["GRIDTRADE_LIVE_MAX_NOTIONAL"] = str(payload.max_notional)
+        if payload.max_order_notional is not None:
+            cfg = replace(cfg, max_order_notional=payload.max_order_notional)
+            updates["GRIDTRADE_LIVE_MAX_ORDER_NOTIONAL"] = str(payload.max_order_notional)
+        if payload.max_position_notional is not None:
+            cfg = replace(cfg, max_position_notional=payload.max_position_notional)
+            updates["GRIDTRADE_LIVE_MAX_POSITION_NOTIONAL"] = str(payload.max_position_notional)
+        if payload.max_open_orders is not None:
+            cfg = replace(cfg, max_open_orders=payload.max_open_orders)
+            updates["GRIDTRADE_LIVE_MAX_OPEN_ORDERS"] = str(payload.max_open_orders)
+        if payload.enabled is not None:
+            cfg = replace(cfg, enabled=payload.enabled)
+            updates["GRIDTRADE_LIVE_ENABLED"] = "1" if payload.enabled else "0"
+        if payload.trading_enabled is not None:
+            if payload.trading_enabled and not payload.confirm_trading:
+                raise HTTPException(
+                    status_code=400,
+                    detail="开启实盘下单需要 confirm_trading=true",
+                )
+            if payload.trading_enabled and not cfg.configured:
+                raise HTTPException(status_code=400, detail="先保存 API Key/Secret 再开启下单")
+            cfg = replace(cfg, trading_enabled=payload.trading_enabled)
+            updates["GRIDTRADE_LIVE_TRADING"] = "1" if payload.trading_enabled else "0"
+        if updates:
+            await asyncio.to_thread(write_env_file, settings.env_path, updates)
+        settings.live = cfg
+        live_service.update_config(cfg)
+        store.audit(
+            "live.config",
+            "credentials_updated" if ("GATE_API_KEY" in updates or "GATE_API_SECRET" in updates) else "updated",
+        )
+        return {"config": live_service.masked_config()}
+
+    @app.post("/api/live/test", dependencies=guarded)
+    async def live_test() -> dict[str, Any]:
+        result = await asyncio.to_thread(live_call, live_service.test_connection)
+        store.audit("live.test", "ok")
+        return result
+
+    @app.post("/api/live/orders", dependencies=guarded)
+    async def live_submit_order(payload: LiveOrderRequest) -> dict[str, Any]:
+        if store.get_bool("kill_switch", False):
+            raise HTTPException(status_code=409, detail="紧急停止已触发，拒绝实盘下单")
+        order = await asyncio.to_thread(
+            live_call,
+            live_service.place_order,
+            payload.contract,
+            payload.size,
+            price=payload.price,
+            tif=payload.tif,
+            reduce_only=payload.reduce_only,
+        )
+        store.audit(
+            "live.order",
+            f"{payload.contract} size={payload.size} price={payload.price or 'market'}",
+        )
+        return {"order": order}
+
+    @app.delete("/api/live/orders/{order_id}", dependencies=guarded)
+    async def live_cancel_order(order_id: str) -> dict[str, Any]:
+        order = await asyncio.to_thread(live_call, live_service.cancel_order, order_id)
+        store.audit("live.cancel", order_id)
+        return {"order": order}
+
+    @app.post("/api/live/positions/{contract}/close", dependencies=guarded)
+    async def live_close_position(contract: str) -> dict[str, Any]:
+        if store.get_bool("kill_switch", False):
+            raise HTTPException(status_code=409, detail="紧急停止已触发，拒绝实盘下单")
+        order = await asyncio.to_thread(live_call, live_service.close_position, contract)
+        store.audit("live.close", contract.upper())
+        return {"order": order}
 
     # -- live paper trading ------------------------------------------------
 

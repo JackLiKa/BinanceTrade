@@ -223,6 +223,108 @@ export interface PaperConfigInput {
   poll_seconds?: number
 }
 
+export interface LiveConfigView {
+  enabled: boolean
+  trading_enabled: boolean
+  exchange: string
+  configured: boolean
+  api_key_hint: string
+  has_secret: boolean
+  subaccount: string
+  max_notional: number
+  max_order_notional: number
+  max_position_notional: number
+  max_open_orders: number
+  poll_seconds: number
+}
+
+export interface LivePosition {
+  contract: string
+  size: number
+  entry_price: number | null
+  mark_price: number
+  liq_price: number | null
+  leverage: number | null
+  margin: number | null
+  unrealized: number | null
+  realized: number | null
+  notional: number
+  quanto_multiplier: number
+}
+
+export interface LiveAnalysis {
+  equity: number
+  available: number
+  unrealized: number
+  realized: number
+  fees_paid: number
+  funding_paid: number
+  gross_notional: number
+  net_notional: number
+  position_margin: number
+  order_margin: number
+  maintenance_margin: number
+  margin_ratio: number | null
+  open_orders: number
+  open_orders_notional: number
+  trade_count: number
+  limits: {
+    max_notional: number
+    max_order_notional: number
+    max_position_notional: number
+    max_open_orders: number
+  }
+  warnings: string[]
+}
+
+export interface LiveSnapshot {
+  configured: boolean
+  enabled: boolean
+  trading_enabled: boolean
+  exchange: string
+  config: LiveConfigView
+  error: string | null
+  account: {
+    currency: string | null
+    total: number
+    available: number
+    unrealized: number
+    position_margin: number
+    order_margin: number
+    maintenance_margin: number
+    in_dual_mode: boolean
+  } | null
+  positions: LivePosition[]
+  orders: Array<Record<string, unknown>>
+  trades: Array<Record<string, unknown>>
+  ledger: Array<Record<string, unknown>>
+  fees: Array<Record<string, unknown>>
+  analysis: LiveAnalysis | null
+  synced_at: number | null
+}
+
+export interface LiveConfigInput {
+  api_key?: string
+  api_secret?: string
+  enabled?: boolean
+  trading_enabled?: boolean
+  confirm_trading?: boolean
+  subaccount?: string
+  max_notional?: number
+  max_order_notional?: number
+  max_position_notional?: number
+  max_open_orders?: number
+  clear_credentials?: boolean
+}
+
+export interface LiveOrderInput {
+  contract: string
+  size: number
+  price?: string
+  tif?: string
+  reduce_only?: boolean
+}
+
 export interface Fill {
   ts: string
   side: string
@@ -648,6 +750,28 @@ export const api = {
 
   paperReset: (config?: PaperConfigInput) =>
     request<PaperState>('/api/paper/reset', json(config ?? {})),
+
+  live: (refresh = false) => request<LiveSnapshot>(`/api/live${refresh ? '?refresh=1' : ''}`),
+
+  liveConfig: () => request<{ config: LiveConfigView }>('/api/live/config'),
+
+  saveLiveConfig: (body: LiveConfigInput) =>
+    request<{ config: LiveConfigView }>('/api/live/config', json(body)),
+
+  testLive: () => request<{ ok: boolean; total: number; currency: string | null }>('/api/live/test', { method: 'POST' }),
+
+  liveSync: () => request<LiveSnapshot>('/api/live/sync', { method: 'POST' }),
+
+  liveOrder: (body: LiveOrderInput) =>
+    request<{ order: Record<string, unknown> }>('/api/live/orders', json(body)),
+
+  cancelLiveOrder: (id: string) =>
+    request<{ order: Record<string, unknown> }>(`/api/live/orders/${id}`, { method: 'DELETE' }),
+
+  closeLivePosition: (contract: string) =>
+    request<{ order: Record<string, unknown> }>(`/api/live/positions/${encodeURIComponent(contract)}/close`, {
+      method: 'POST',
+    }),
 }
 
 export function streamUrl(symbol?: string): string {

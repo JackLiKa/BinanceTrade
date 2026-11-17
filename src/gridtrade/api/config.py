@@ -43,13 +43,30 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def default_env_path() -> Path:
+    """Locate the deployment ``.env``.
+
+    When the package is installed non-editable, ``REPO_ROOT`` points inside
+    site-packages; the working directory (systemd ``WorkingDirectory``) is the
+    deployment root, so prefer it when it looks like a checkout. An explicit
+    ``GRIDTRADE_ENV_FILE`` always wins.
+    """
+    explicit = os.environ.get("GRIDTRADE_ENV_FILE", "").strip()
+    if explicit:
+        return Path(explicit)
+    cwd = Path.cwd()
+    if (cwd / "pyproject.toml").is_file() or (cwd / "src" / "gridtrade").is_dir():
+        return cwd / ".env"
+    return REPO_ROOT / ".env"
+
+
 def load_env_file(path: Path | None = None) -> Path | None:
     """Load KEY=VALUE pairs from ``.env`` without overriding the environment.
 
     Real environment variables win so systemd overrides and one-off commands
     still behave as expected. Returns the file that was read, if any.
     """
-    target = path or REPO_ROOT / ".env"
+    target = path or default_env_path()
     if not target.is_file():
         return None
     for raw in target.read_text(encoding="utf-8").splitlines():
@@ -138,6 +155,43 @@ class PaperConfig:
 
 
 @dataclass(slots=True)
+class LiveConfig:
+    """Gate USDT futures live account. Trading stays locked unless explicitly enabled."""
+
+    enabled: bool = False
+    trading_enabled: bool = False
+    exchange: str = "gate"
+    api_key: str = ""
+    api_secret: str = ""
+    subaccount: str = ""
+    max_notional: float = 5_000.0
+    max_order_notional: float = 1_000.0
+    max_position_notional: float = 3_000.0
+    max_open_orders: int = 20
+    poll_seconds: float = 15.0
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key and self.api_secret)
+
+    @classmethod
+    def from_env(cls) -> LiveConfig:
+        return cls(
+            enabled=_env_bool("GRIDTRADE_LIVE_ENABLED", False),
+            trading_enabled=_env_bool("GRIDTRADE_LIVE_TRADING", False),
+            exchange=os.environ.get("GRIDTRADE_LIVE_EXCHANGE", "gate").strip().lower(),
+            api_key=os.environ.get("GATE_API_KEY", "").strip(),
+            api_secret=os.environ.get("GATE_API_SECRET", "").strip(),
+            subaccount=os.environ.get("GRIDTRADE_LIVE_SUBACCOUNT", "").strip(),
+            max_notional=_as_float("GRIDTRADE_LIVE_MAX_NOTIONAL", 5_000.0),
+            max_order_notional=_as_float("GRIDTRADE_LIVE_MAX_ORDER_NOTIONAL", 1_000.0),
+            max_position_notional=_as_float("GRIDTRADE_LIVE_MAX_POSITION_NOTIONAL", 3_000.0),
+            max_open_orders=_as_int("GRIDTRADE_LIVE_MAX_OPEN_ORDERS", 20),
+            poll_seconds=max(3.0, _as_float("GRIDTRADE_LIVE_POLL_SECONDS", 15.0)),
+        )
+
+
+@dataclass(slots=True)
 class Settings:
     data_dir: Path = REPO_ROOT / "research" / "data"
     var_dir: Path = REPO_ROOT / "var"
@@ -152,11 +206,14 @@ class Settings:
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
     paper: PaperConfig = field(default_factory=PaperConfig)
+    live: LiveConfig = field(default_factory=LiveConfig)
+    env_path: Path = field(default_factory=default_env_path)
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir)
         self.var_dir = Path(self.var_dir)
         self.web_dir = Path(self.web_dir)
+        self.env_path = Path(self.env_path)
         self.var_dir.mkdir(parents=True, exist_ok=True)
         if not self.token:
             self.token = _token(self.var_dir)
@@ -179,4 +236,6 @@ class Settings:
             token=os.environ.get("GRIDTRADE_TOKEN", "").strip(),
             cors_origins=[o.strip() for o in origins.split(",") if o.strip()],
             paper=PaperConfig.from_env(),
+            live=LiveConfig.from_env(),
+            env_path=default_env_path(),
         )

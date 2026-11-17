@@ -28,12 +28,22 @@ GATE_FUTURES = {
     "/futures/{settle}/contracts": "Gate API v4 · Futures · Get contracts",
     "/futures/{settle}/tickers": "Gate API v4 · Futures · Get tickers",
     "/futures/{settle}/funding_rate": "Gate API v4 · Futures · Get funding rate history",
+    # private account endpoints used by the live integration
+    "/futures/{settle}/accounts": "Gate API v4 · Futures · Get futures account",
+    "/futures/{settle}/positions": "Gate API v4 · Futures · Get user position list",
+    "/futures/{settle}/positions/{contract}/leverage": "Gate API v4 · Futures · Update position leverage",
+    "/futures/{settle}/orders": "Gate API v4 · Futures · Query/place/cancel orders",
+    "/futures/{settle}/orders/{order_id}": "Gate API v4 · Futures · Cancel an order",
+    "/futures/{settle}/my_trades": "Gate API v4 · Futures · Query personal trading records",
+    "/futures/{settle}/account_book": "Gate API v4 · Futures · Query account change history",
+    "/futures/{settle}/fee": "Gate API v4 · Futures · Query trading fee rates",
 }
 
 ALLOWED_HOSTS = {"fapi.binance.com", "api.gateio.ws"}
 
 SOURCE_FILES = [
     ROOT / "src/gridtrade/api/live.py",
+    ROOT / "src/gridtrade/api/live_gate.py",
     ROOT / "src/gridtrade/api/paper.py",
     ROOT / "research/fetch.py",
 ]
@@ -41,8 +51,10 @@ SOURCE_FILES = [
 
 def _normalize(path: str) -> str:
     path = re.sub(r"\{[^}]+\}", "{x}", path)
-    path = path.replace("/futures/usdt/", "/futures/{settle}/")
-    path = re.sub(r"(/contracts/)\{x\}", r"\1{contract}", path)
+    path = re.sub(r"^/futures/[^/]+/", "/futures/{settle}/", path)
+    path = path.replace("/positions/{x}/leverage", "/positions/{contract}/leverage")
+    path = path.replace("/contracts/{x}", "/contracts/{contract}")
+    path = path.replace("/orders/{x}", "/orders/{order_id}")
     return path
 
 

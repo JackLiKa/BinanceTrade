@@ -4,8 +4,8 @@
 以及一套同时服务两种外壳的 React 单页应用——浏览器（桌面侧边栏）与 WebView APK
 （移动端底部导航）。
 
-面板**仅用于研究与模拟**。实盘入口可见但处于锁定状态：没有实盘适配器、没有订单对账、
-没有 listenKey 续期，这个入口的存在只是为了让边界清晰。
+面板以研究与模拟为主，另提供 **Gate 实盘账户只读分析**。实盘下单能力已经实现，但默认锁死
+（`GRIDTRADE_LIVE_TRADING=0`），需要显式配置凭据、确认风险并开启总开关后才会发送真实订单。
 
 英文文档见 [README.en.md](README.en.md)。
 
@@ -16,7 +16,7 @@
 ```
 src/gridtrade/            引擎、策略、OMS、模拟撮合、研究运行器
 src/gridtrade/api/        FastAPI 应用、配置、SQLite 存储、任务队列、行情推送
-web/                      React 19 + Vite 6 + Tailwind 4 单页应用（hash 路由，9 个页面）
+web/                      React 19 + Vite 6 + Tailwind 4 单页应用（hash 路由，11 个页面）
 apk/                      无 Gradle 的 Android 构建：manifest、单个 Activity、build.sh
 research/                 parquet 数据集、抓取脚本、回测辅助
 tests/                    pytest 用例（领域、引擎、OMS、风控、模拟、策略）
@@ -106,6 +106,19 @@ cp .env.example .env
 | `GRIDTRADE_PAPER_TAKER_FEE_BP` | `5` | 吃单费率 |
 | `GRIDTRADE_PAPER_POLL_SECONDS` | `3` | 行情轮询间隔 |
 
+实盘（Gate USDT 永续）变量，可在页面配置并写回服务器 `.env`：
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `GRIDTRADE_LIVE_ENABLED` | `0` | 是否启用实盘账户同步/分析 |
+| `GRIDTRADE_LIVE_TRADING` | `0` | **下单总开关**，默认关闭；开启后仍受风控上限约束 |
+| `GATE_API_KEY` / `GATE_API_SECRET` | 空 | Gate API 凭据（只读 Key 只能分析） |
+| `GRIDTRADE_LIVE_MAX_NOTIONAL` | `5000` | 总名义上限（USDT） |
+| `GRIDTRADE_LIVE_MAX_ORDER_NOTIONAL` | `1000` | 单笔上限 |
+| `GRIDTRADE_LIVE_MAX_POSITION_NOTIONAL` | `3000` | 单标的上限 |
+| `GRIDTRADE_LIVE_MAX_OPEN_ORDERS` | `20` | 最大挂单数 |
+| `GRIDTRADE_ENV_FILE` | 自动 | 指定 `.env` 路径（工作目录不是部署根时使用） |
+
 在 localhost 之外暴露面板：
 
 - 局域网 / Tailscale：`GRIDTRADE_HOST=0.0.0.0`，然后访问 `http://<host>:8000`。
@@ -121,6 +134,7 @@ cp .env.example .env
 | `#/strategy` | 网格参数、参数校验、价格区间/敞口/止损风险的实时预览 |
 | `#/backtest` | 回放 / 前向滚动 / 参数扫描、月度归因、订单流、权益与回撤 |
 | `#/paper` | 实时组合模拟盘：多标的共享保证金、网格纸面成交、手续费/资金费、组合权益与持仓 |
+| `#/live` | 实盘账户（Gate）：余额/持仓/挂单/成交/流水与实盘分析；下单默认锁定 |
 | `#/orders` | 任务选择、订单/成交表、拒单原因、期末挂单 |
 | `#/positions` | 模拟持仓、网格状态、分层库存 |
 | `#/risk` | 派生限额、回撤保护、紧急停止、拒单计数 |
@@ -235,18 +249,21 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 61 项
+.venv/bin/python -m pytest            # 68 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 
 ## 有意为之的边界
 
-- **实盘交易处于锁定状态。** `MODES` 启用 `research` 与 `paper`（实时纸面网格，
-  只读公开行情），`live` 没有适配器。任何时候都不会索取或保存交易所密钥。
-- 实时组合模拟盘使用 Gate.io USDT 永续公开行情与资金费率（服务器可访问），不连接任何
-  私有接口、不下单；默认 `SKHY_USDT / SPCX_USDT / GOOGL_USDT / AMGN_USDT`，共享一个
-  保证金池，成交、手续费（取自合约 `maker_fee_rate/taker_fee_rate`）、资金费与组合权益
-  写入 `var/paper.db`。所有外部接口见 [外部接口清单](docs/memory/07-外部接口清单与官方文档对照.md)。
+- **实盘下单默认锁定。** `MODES` 启用 `research`、`paper` 与 `live`（Gate 只读分析）；
+  下单总开关默认 0，未开启时所有下单/撤单请求返回 403。API 凭据只写入服务器 `.env`，
+  页面只显示 Key 后四位，Secret 不回传。
+- 实时组合模拟盘使用 Gate.io USDT 永续公开行情与资金费率（服务器可访问），默认
+  `SKHY_USDT / SPCX_USDT / GOOGL_USDT / AMGN_USDT`，共享一个保证金池，成交、手续费
+  （取自合约 `maker_fee_rate/taker_fee_rate`）、资金费与组合权益写入 `var/paper.db`。
+- 实盘接入 Gate 私有只读接口做账户分析；下单代码完整但默认锁定（`GRIDTRADE_LIVE_TRADING=0`），
+  未配置 Key 时不会发起任何私有写请求。所有外部接口见
+  [外部接口清单](docs/memory/07-外部接口清单与官方文档对照.md)。
 - 单用户、单进程。写入通过锁串行化；SQLite 使用 WAL 模式与短连接。
 - 行情快照走币安公共 REST，失败时降级为 `source: "offline"`，而不是阻塞界面。
 - 模拟成交使用分钟 K 线的最高/最低价；资金费率按记录的资金事件扣缴，

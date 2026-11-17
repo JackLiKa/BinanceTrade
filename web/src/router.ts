@@ -6,6 +6,7 @@ export const ROUTES = [
   'strategy',
   'backtest',
   'paper',
+  'live',
   'orders',
   'positions',
   'risk',

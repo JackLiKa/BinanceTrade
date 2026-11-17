@@ -8,6 +8,7 @@ import { Market } from './pages/Market'
 import { Strategy } from './pages/Strategy'
 import { Backtest } from './pages/Backtest'
 import { Paper } from './pages/Paper'
+import { Live } from './pages/Live'
 import { Orders } from './pages/Orders'
 import { Positions } from './pages/Positions'
 import { Risk } from './pages/Risk'
@@ -48,6 +49,8 @@ function Shell() {
         <Backtest />
       ) : route === 'paper' ? (
         <Paper />
+      ) : route === 'live' ? (
+        <Live />
       ) : route === 'orders' ? (
         <Orders />
       ) : route === 'positions' ? (

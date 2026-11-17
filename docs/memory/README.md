@@ -7,6 +7,7 @@
 - 在线实例：`http://81.71.71.131:8000`（**明文 HTTP，临时**；令牌在服务器 `var/token`）
 - 实时组合模拟盘：`#/paper`，4 标的共享保证金，数据源 Gate 永续公开接口，费率取自合约；配置在服务器 `.env`，状态在 `var/paper.db`
 - 外部接口：见 07，`tests/test_external_endpoints.py` 强制只允许官方且已登记的接口
+- 实盘：`#/live` 配置写入服务器 `.env`；只读分析可用，下单默认锁定（`GRIDTRADE_LIVE_TRADING=0`）
 - 文档更新时间：2026-11-17（Asia/Macau）
 - 本地开发目录：`/Users/user/Dev/bnapi`
 
@@ -66,6 +67,7 @@ var/                    # 运行期 SQLite、令牌（被忽略）
 - [实时模拟盘与 APK 免登录（2026-11-17）](vault/gridtrade-实时模拟盘与-apk-免登录-2026-11-17.md)
 - [四标的共享保证金组合模拟盘（2026-11-17）](vault/gridtrade-四标的共享保证金组合模拟盘-2026-11-17.md)
 - [外部接口审计与手续费来源（2026-11-17）](vault/gridtrade-外部接口审计与手续费来源-2026-11-17.md)
+- [实盘接入：Gate 只读分析与锁定下单（2026-11-17）](vault/gridtrade-实盘接入-gate-只读-锁定下单-2026-11-17.md)
 - [真机测试结论与修复](vault/gridtrade-web-apk-真机测试结论与修复-2026-11-16.md)
 - [中文化完成](vault/gridtrade-panel-中文化完成-ui-readme.md)
 - [移动端 WebView 布局与验收](vault/gridtrade-panel-mobile-webview-layout-fixes-and-acceptance-setup.md)
