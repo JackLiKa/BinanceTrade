@@ -132,6 +132,7 @@ export interface PaperFill {
   fee: number
   realized: number
   slip: number
+  action?: string
   reason: string
 }
 

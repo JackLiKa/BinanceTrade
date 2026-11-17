@@ -263,6 +263,11 @@ export function Paper() {
                     <td className="py-2 text-right font-mono tabular-nums text-muted">{fmtPct(row.funding_rate * 100, 4, false)}</td>
                     <td className={cx('py-2 text-right font-mono tabular-nums', row.position > 0 ? 'text-up' : row.position < 0 ? 'text-down' : 'text-muted')}>
                       {fmtQty(row.position)}
+                      {row.position !== 0 ? (
+                        <span className={cx('ml-1 text-[10px]', row.position > 0 ? 'text-up' : 'text-down')}>
+                          {row.position > 0 ? '多' : '空'}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="py-2 text-right font-mono tabular-nums text-muted">{row.position ? fmtPrice(row.avg_entry) : '—'}</td>
                     <td className={cx('py-2 text-right font-mono tabular-nums', row.unrealized >= 0 ? 'text-up' : 'text-down')}>
@@ -344,6 +349,7 @@ export function Paper() {
                 <tr className="text-left text-[10px] uppercase tracking-wider text-faint">
                   <th className="px-5 py-2 font-medium">时间</th>
                   <th className="py-2 font-medium">标的</th>
+                  <th className="py-2 font-medium">动作</th>
                   <th className="py-2 font-medium">方向</th>
                   <th className="py-2 text-right font-medium">价格</th>
                   <th className="py-2 text-right font-medium">数量</th>
@@ -354,12 +360,21 @@ export function Paper() {
               </thead>
               <tbody>
                 {data.fills.length === 0 ? (
-                  <tr><td colSpan={8} className="px-5 py-8 text-center text-[12px] text-muted">暂无成交</td></tr>
+                  <tr><td colSpan={9} className="px-5 py-8 text-center text-[12px] text-muted">暂无成交</td></tr>
                 ) : (
                   data.fills.map((fill) => (
                     <tr key={fill.id} className="border-t border-line-soft">
                       <td className="px-5 py-2 font-mono text-[10.5px] text-muted">{fmtTime(fill.ts)}</td>
                       <td className="py-2 font-mono text-[10.5px] text-muted">{fill.symbol}</td>
+                      <td className="py-2">
+                        <Badge tone={fill.action?.startsWith('OPEN') ? 'info' : 'warn'}>
+                          {fill.action === 'OPEN_LONG' ? '开多'
+                            : fill.action === 'OPEN_SHORT' ? '开空'
+                            : fill.action === 'CLOSE_LONG' ? '平多'
+                            : fill.action === 'CLOSE_SHORT' ? '平空'
+                            : '—'}
+                        </Badge>
+                      </td>
                       <td className={cx('py-2 font-mono', fill.side === 'BUY' ? 'text-up' : 'text-down')}>{fill.side}</td>
                       <td className="py-2 text-right font-mono tabular-nums">{fmtPrice(fill.price)}</td>
                       <td className="py-2 text-right font-mono tabular-nums">{fmtQty(fill.qty)}</td>

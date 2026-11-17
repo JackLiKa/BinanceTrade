@@ -26,6 +26,31 @@ from ..strategy.costs import CostModel
 from .config import PaperConfig
 
 _EPS = 1e-9
+
+#: Chinese labels for the four grid actions (mirrors the Binance adapter).
+PAPER_ACTION_LABELS = {
+    "OPEN_LONG": "开多",
+    "OPEN_SHORT": "开空",
+    "CLOSE_LONG": "平多",
+    "CLOSE_SHORT": "平空",
+}
+
+
+def _paper_action(side: str, before: float, after: float) -> str:
+    """Classify one paper fill as open/close long/short from the position change.
+
+    The inventory grid is symmetric: buying below the anchor opens long
+    (or closes a short), selling above opens short (or closes a long). A fill
+    that crosses zero is labelled by its net effect.
+    """
+    if side == "BUY":
+        if before >= -_EPS:
+            return "OPEN_LONG"
+        return "OPEN_LONG" if after > _EPS else "CLOSE_SHORT"
+    if before <= _EPS:
+        return "OPEN_SHORT"
+    return "OPEN_SHORT" if after < -_EPS else "CLOSE_LONG"
+
 _FILL_LIMIT = 200
 
 SCHEMA = """
@@ -464,6 +489,7 @@ class PaperEngine:
         price = self._slipped_price(side, ref_price)
         slip = abs(qty) * abs(price - ref_price)
         signed = qty if side == "BUY" else -qty
+        before = state.position
         fee = abs(signed) * price * fee_rate
         account.cash -= fee
         account.fees += fee
@@ -488,12 +514,24 @@ class PaperEngine:
             elif (new_position > 0) != (state.position > 0):
                 state.avg_entry = price
             state.position = new_position
+        action = _paper_action(side, before, state.position)
         self.gross = self._gross()
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO paper_fills (ts, symbol, side, price, qty, fee, realized, slip,"
-                " reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (_iso(now), state.symbol, side, price, round(qty, 12), fee, realized, slip, reason),
+                " reason, action) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _iso(now),
+                    state.symbol,
+                    side,
+                    price,
+                    round(qty, 12),
+                    fee,
+                    realized,
+                    slip,
+                    reason,
+                    action,
+                ),
             )
 
     def _funding_rate_at(self, symbol: str, ts: int) -> float | None:
@@ -676,6 +714,8 @@ class PaperEngine:
             fill_columns = {row[1] for row in conn.execute("PRAGMA table_info(paper_fills)")}
             if "slip" not in fill_columns:
                 conn.execute("ALTER TABLE paper_fills ADD COLUMN slip REAL NOT NULL DEFAULT 0")
+            if "action" not in fill_columns:
+                conn.execute("ALTER TABLE paper_fills ADD COLUMN action TEXT NOT NULL DEFAULT ''")
             conn.commit()
 
     def _save(self) -> None:
