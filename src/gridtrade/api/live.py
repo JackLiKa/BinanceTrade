@@ -18,17 +18,21 @@ CACHE_SECONDS = 3.0
 
 
 class LiveMarket:
-    def __init__(self) -> None:
+    def __init__(self, *, enabled: bool = True, failure_ttl: float = 60.0) -> None:
+        self.enabled = enabled
+        self.failure_ttl = failure_ttl
         self._client: httpx.AsyncClient | None = None
         self._cache: dict[str, Any] | None = None
         self._cache_at = 0.0
+        self._failure: dict[str, Any] | None = None
+        self._failure_at = 0.0
         self._lock = asyncio.Lock()
 
     async def client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=FAPI,
-                timeout=httpx.Timeout(5.0, connect=3.0),
+                timeout=httpx.Timeout(3.0, connect=1.5),
                 headers={"User-Agent": "gridtrade/0.1 research-dashboard"},
             )
         return self._client
@@ -38,14 +42,43 @@ class LiveMarket:
             await self._client.aclose()
             self._client = None
 
+    def _offline(self, symbol: str, error: str) -> dict[str, Any]:
+        return {
+            "symbol": symbol,
+            "mark_price": None,
+            "index_price": None,
+            "last_price": None,
+            "change_24h_pct": None,
+            "high_24h": None,
+            "low_24h": None,
+            "volume_24h": None,
+            "quote_volume_24h": None,
+            "last_funding_rate": None,
+            "next_funding_time": None,
+            "source": "offline",
+            "updated_at": round(time.time(), 3),
+            "error": error,
+        }
+
     async def snapshot(self, symbol: str) -> dict[str, Any]:
+        if not self.enabled:
+            return self._offline(symbol, "live market disabled")
         async with self._lock:
-            if self._cache is not None and time.monotonic() - self._cache_at < CACHE_SECONDS:
+            now = time.monotonic()
+            if self._cache is not None and now - self._cache_at < CACHE_SECONDS:
                 return self._cache
-            snapshot = await self._fetch(symbol)
+            if self._failure is not None and now - self._failure_at < self.failure_ttl:
+                return self._failure
+            try:
+                snapshot = await self._fetch(symbol)
+            except Exception as exc:  # exchange unreachable: fail fast and cache it
+                snapshot = self._offline(symbol, str(exc)[:200])
+                self._failure = snapshot
+                self._failure_at = now
+                return snapshot
             if snapshot.get("source") == "binance":
                 self._cache = snapshot
-                self._cache_at = time.monotonic()
+                self._cache_at = now
             return snapshot
 
     async def _fetch(self, symbol: str) -> dict[str, Any]:

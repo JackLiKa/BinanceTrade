@@ -68,6 +68,7 @@ var/                    # 运行期 SQLite、令牌（被忽略）
 - [四标的共享保证金组合模拟盘（2026-11-17）](vault/gridtrade-四标的共享保证金组合模拟盘-2026-11-17.md)
 - [外部接口审计与手续费来源（2026-11-17）](vault/gridtrade-外部接口审计与手续费来源-2026-11-17.md)
 - [实盘接入：Gate 只读分析与锁定下单（2026-11-17）](vault/gridtrade-实盘接入-gate-只读-锁定下单-2026-11-17.md)
+- [手机首屏性能定位与修复（2026-11-17）](vault/gridtrade-手机首屏性能定位与修复-2026-11-17.md)
 - [真机测试结论与修复](vault/gridtrade-web-apk-真机测试结论与修复-2026-11-16.md)
 - [中文化完成](vault/gridtrade-panel-中文化完成-ui-readme.md)
 - [移动端 WebView 布局与验收](vault/gridtrade-panel-mobile-webview-layout-fixes-and-acceptance-setup.md)

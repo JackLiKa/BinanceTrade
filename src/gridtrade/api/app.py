@@ -29,6 +29,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -211,7 +212,7 @@ class LiveOrderRequest(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = Store(settings.var_dir / "gridtrade.db")
-    live = LiveMarket()
+    live = LiveMarket(enabled=settings.market_live)
     service = ResearchService(settings.data_dir, live)
     jobs = JobQueue(store, workers=2)
     paper = PaperEngine(settings.paper, settings.var_dir)
@@ -256,6 +257,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.paper = paper
     app.state.live_service = live_service
 
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
