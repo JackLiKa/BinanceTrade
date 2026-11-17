@@ -131,6 +131,7 @@ export interface PaperFill {
   qty: number
   fee: number
   realized: number
+  slip: number
   reason: string
 }
 
@@ -198,6 +199,7 @@ export interface PaperState {
     realized: number
     fees: number
     funding: number
+    slippage: number
     gross_notional: number
     margin_used: number
     leverage: number
@@ -209,6 +211,7 @@ export interface PaperState {
   fills: PaperFill[]
   funding: PaperFunding[]
   equity: Array<[string, number]>
+  cost?: BinanceCostReport
 }
 
 export interface PaperConfigInput {

@@ -196,10 +196,27 @@ export function Paper() {
           />
           <Stat
             label="成本"
-            value={`$${fmtMoney(account.fees + account.funding, 3)}`}
-            sub={`手续费 ${fmtMoney(account.fees, 3)} · 资金费 ${fmtMoney(account.funding, 3)}`}
+            value={`$${fmtMoney(account.fees + account.funding + (account.slippage ?? 0), 3)}`}
+            sub={`手续费 ${fmtMoney(account.fees, 3)} · 资金费 ${fmtMoney(account.funding, 3)} · 滑点 ${fmtMoney(account.slippage ?? 0, 3)}`}
           />
         </div>
+        {data.cost ? (
+          <div className="mt-3 rounded-lg border border-line-soft bg-elevated/40 px-3 py-2 text-[11px] text-muted">
+            成本模型：maker 往返 <span className="font-mono text-ink">{fmtMoney(data.cost.round_trip_maker_bp ?? 0, 2)} bp</span>
+            {' · '}taker 往返 <span className="font-mono text-ink">{fmtMoney(data.cost.round_trip_taker_bp ?? 0, 2)} bp</span>
+            {' · '}保本间距 <span className="font-mono text-ink">{fmtMoney(data.cost.breakeven_spacing_bp ?? 0, 2)} bp</span>
+            {' · '}当前间距 <span className="font-mono text-ink">{fmtMoney(data.config.spacing_bp, 2)} bp</span>
+            {data.cost.net_edge_bp != null ? (
+              <>
+                {' · '}净边际{' '}
+                <span className={cx('font-mono', data.cost.net_edge_bp >= 0 ? 'text-up' : 'text-down')}>
+                  {fmtMoney(data.cost.net_edge_bp, 2)} bp
+                </span>
+              </>
+            ) : null}
+            {' · '}滑点假设 {fmtMoney(data.cost.slippage_bp ?? 0, 2)} bp/边
+          </div>
+        ) : null}
         {data.last_error ? <div className="mt-3"><ErrorNote>{data.last_error}</ErrorNote></div> : null}
         {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}
       </Card>
@@ -331,12 +348,13 @@ export function Paper() {
                   <th className="py-2 text-right font-medium">价格</th>
                   <th className="py-2 text-right font-medium">数量</th>
                   <th className="py-2 text-right font-medium">手续费</th>
+                  <th className="py-2 text-right font-medium">滑点</th>
                   <th className="py-2 pr-5 text-right font-medium">已实现</th>
                 </tr>
               </thead>
               <tbody>
                 {data.fills.length === 0 ? (
-                  <tr><td colSpan={7} className="px-5 py-8 text-center text-[12px] text-muted">暂无成交</td></tr>
+                  <tr><td colSpan={8} className="px-5 py-8 text-center text-[12px] text-muted">暂无成交</td></tr>
                 ) : (
                   data.fills.map((fill) => (
                     <tr key={fill.id} className="border-t border-line-soft">
@@ -346,6 +364,7 @@ export function Paper() {
                       <td className="py-2 text-right font-mono tabular-nums">{fmtPrice(fill.price)}</td>
                       <td className="py-2 text-right font-mono tabular-nums">{fmtQty(fill.qty)}</td>
                       <td className="py-2 text-right font-mono tabular-nums text-muted">{fmtMoney(fill.fee, 3)}</td>
+                      <td className="py-2 text-right font-mono tabular-nums text-muted">{fmtMoney(fill.slip ?? 0, 4)}</td>
                       <td className={cx('py-2 pr-5 text-right font-mono tabular-nums', fill.realized >= 0 ? 'text-up' : 'text-down')}>
                         {fmtMoney(fill.realized, 3)}
                       </td>
