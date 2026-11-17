@@ -18,8 +18,11 @@ CACHE_SECONDS = 3.0
 
 
 class LiveMarket:
-    def __init__(self, *, enabled: bool = True, failure_ttl: float = 60.0) -> None:
+    def __init__(
+        self, *, enabled: bool = True, proxy: str = "", failure_ttl: float = 60.0
+    ) -> None:
         self.enabled = enabled
+        self.proxy = proxy or None
         self.failure_ttl = failure_ttl
         self._client: httpx.AsyncClient | None = None
         self._cache: dict[str, Any] | None = None
@@ -32,6 +35,7 @@ class LiveMarket:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=FAPI,
+                proxy=self.proxy,
                 timeout=httpx.Timeout(3.0, connect=1.5),
                 headers={"User-Agent": "gridtrade/0.1 research-dashboard"},
             )

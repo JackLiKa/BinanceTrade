@@ -81,6 +81,7 @@ cd web && pnpm dev     # http://localhost:5173
 | `GRIDTRADE_SYMBOL` | `GOOGLUSDT` | 默认交易对 |
 | `GRIDTRADE_AUTORUN` | `1` | 启动时把上一进程遗留的排队/运行中任务标记为失败 |
 | `GRIDTRADE_MARKET_LIVE` | `1` | 是否访问 Binance 实时行情；服务器出网被墙时设 `0`，否则每请求会等待连接超时 |
+| `GRIDTRADE_PROXY` | 空 | 访问 Binance 的代理（`http://host:port` 或 `socks5://host:port`），需能 CONNECT 到 443 |
 | `GRIDTRADE_SECURE_COOKIE` | `0` | 为认证 Cookie 加 `Secure`（仅 HTTPS） |
 | `GRIDTRADE_CORS_ORIGINS` | localhost:5173 | 逗号分隔的开发源 |
 

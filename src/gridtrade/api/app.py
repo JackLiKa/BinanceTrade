@@ -252,7 +252,7 @@ class AdminPasswordRequest(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = Store(settings.var_dir / "gridtrade.db")
-    live = LiveMarket(enabled=settings.market_live)
+    live = LiveMarket(enabled=settings.market_live, proxy=settings.proxy)
     service = ResearchService(settings.data_dir, live)
     jobs = JobQueue(store, workers=2)
     paper = PaperEngine(settings.paper, settings.var_dir)

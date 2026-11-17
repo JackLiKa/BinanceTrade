@@ -202,6 +202,7 @@ class Settings:
     auto_run: bool = True
     secure_cookie: bool = False
     market_live: bool = True
+    proxy: str = ""
     token: str = ""
     cors_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
@@ -235,6 +236,7 @@ class Settings:
             auto_run=_env_bool("GRIDTRADE_AUTORUN", True),
             secure_cookie=_env_bool("GRIDTRADE_SECURE_COOKIE", False),
             market_live=_env_bool("GRIDTRADE_MARKET_LIVE", True),
+            proxy=os.environ.get("GRIDTRADE_PROXY", "").strip(),
             token=os.environ.get("GRIDTRADE_TOKEN", "").strip(),
             cors_origins=[o.strip() for o in origins.split(",") if o.strip()],
             paper=PaperConfig.from_env(),
