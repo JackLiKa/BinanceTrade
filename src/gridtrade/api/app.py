@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ..research.runner import ResearchParams
 from ..strategy.grid import GridParams
 from .config import LiveConfig, Settings
+from .binance_node import BinanceNodeClient, BinanceNodeError
 from .jobs import JobQueue
 from .live import LiveMarket
 from .admin import ADMIN_COOKIE, SESSION_TTL, AdminError, AdminService, AdminAuth
@@ -830,6 +831,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail=f"模拟盘重置失败: {exc}") from exc
         store.audit("paper.reset", "account reset")
         return state
+
+    # -- binance execution node (tunnel-only, read-only from the panel) ----
+
+    node_client = (
+        BinanceNodeClient(settings.binance_node_url) if settings.binance_node_url else None
+    )
+
+    def node_or_503() -> BinanceNodeClient:
+        if node_client is None:
+            raise HTTPException(
+                status_code=503,
+                detail="未配置 Binance 执行节点（GRIDTRADE_BINANCE_NODE_URL）",
+            )
+        return node_client
+
+    def node_fetch(fn: Any) -> Any:
+        try:
+            return fn()
+        except BinanceNodeError as exc:
+            raise HTTPException(status_code=502, detail=f"执行节点错误: {exc.msg}") from exc
+
+    @app.get("/api/binance/health", dependencies=guarded)
+    async def binance_health() -> dict[str, Any]:
+        client = node_or_503()
+        payload = await asyncio.to_thread(node_fetch, client.health)
+        return {"ok": True, "node_url": client.base_url, "health": payload}
+
+    @app.get("/api/binance/state", dependencies=guarded)
+    async def binance_state(symbol: str | None = None) -> dict[str, Any]:
+        client = node_or_503()
+
+        def collect() -> dict[str, Any]:
+            out: dict[str, Any] = {"node_url": client.base_url, "errors": {}}
+            for key, fn in (
+                ("health", client.health),
+                ("account", client.account),
+                ("positions", lambda: client.positions(symbol)),
+                ("orders", lambda: client.open_orders(symbol)),
+            ):
+                try:
+                    out[key] = fn()
+                except BinanceNodeError as exc:  # keep partial data
+                    out["errors"][key] = exc.msg
+            return out
+
+        return await asyncio.to_thread(collect)
 
     @app.get("/api/risk", dependencies=guarded)
     async def risk(

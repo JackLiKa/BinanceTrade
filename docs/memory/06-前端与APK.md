@@ -1,6 +1,6 @@
 # 06 前端与APK
 
-> **用途**：记录 `web/` SPA 与 `apk/` WebView 壳的可复核事实——技术栈与脚本、11 条 hash 路由与导航、页面字段与交互、`api.ts` 全量接口、状态/hooks/格式化、组件与 E2E 选择器、样式与响应式、`/admin` 静态页、APK 构建链与 `MainActivity` 结构。后续改前端、写 E2E、重打 APK 直接查本文。
+> **用途**：记录 `web/` SPA 与 `apk/` WebView 壳的可复核事实——技术栈与脚本、12 条 hash 路由与导航、页面字段与交互、`api.ts` 全量接口、状态/hooks/格式化、组件与 E2E 选择器、样式与响应式、`/admin` 静态页、APK 构建链与 `MainActivity` 结构。后续改前端、写 E2E、重打 APK 直接查本文。
 > **读者**：前端/全栈开发者、测试（E2E/真机验收）、负责发版与 APK 构建的人。
 > **最后核实**：2026-11-17 · 代码基线 `9a5cc4f` · 事实均标注 `路径:行号`
 > **相关文档**：[README 索引](README.md) · [01 项目总览](01-项目总览.md) · [03 接口参考](03-接口参考.md)
@@ -9,7 +9,7 @@
 ## 速读（TL;DR）
 
 - 面板是 React 19 + Vite 6 + Tailwind 4 的单页应用，纯 hash 路由，无 react-router；依赖锁定 `lightweight-charts 5.3.0`、`react 19.3.1`、`typescript 5.9.3`（`web/pnpm-lock.yaml:12-44`）。
-- **11 条路由 / 11 个页面**（`web/src/router.ts:3-15`），不是旧文档里的 9 页；`#/live` 是正式路由（`web/src/App.tsx:52-53`）。
+- **12 条路由 / 12 个页面**（`web/src/router.ts:3-15`），不是旧文档里的 9 页；`#/live` 是正式路由（`web/src/App.tsx:52-53`）。
 - 桌面侧边栏 **11 项**；移动底栏 **4 个页面项 + “更多” = 5 个按钮**；更多抽屉渲染全部 11 项（`web/src/components/Layout.tsx:33-45,326,434-500`）。
 - `api.ts` 共 **33 个 API 方法**（`web/src/api.ts:633-775`），其中 `symbols`、`liveConfig`、`closeLivePosition` 无调用点。
 - 图表统一 lightweight-charts v5；4 个图表组件，单页最多 **2 个图表实例**（`Overview`、`Backtest` 回放、`Market`）。
@@ -70,22 +70,23 @@
 | 4 | `#/backtest` | `web/src/pages/Backtest.tsx`（`App.tsx:48-49`） | 回测实验室（Layout:51） | 运行配置、历史、回放/前向滚动/扫描三 Tab 结果 | `quality`、`runs` 5s、`run` 700ms、`artifact`、`runs/replay\|walkforward\|sweep`、`cancel` |
 | 5 | `#/paper` | `web/src/pages/Paper.tsx`（`App.tsx:50-51`） | 模拟盘（Layout:52） | 状态头、4 KPI、10 列持仓表、权益图、8 项参数、成交/资金费表 | `paper` 3s、`paper/start\|stop\|reset` |
 | 6 | `#/live` | `web/src/pages/Live.tsx`（`App.tsx:52-53`） | 实盘（Layout:53） | 实盘配置、账户、持仓、挂单、成交、流水、风控、下单面板 | `live` 15s、`live/config`、`live/test`、`live/sync`、`live/orders` |
-| 7 | `#/orders` | `web/src/pages/Orders.tsx`（`App.tsx:54-55`） | 订单与成交（Layout:54） | 任务侧栏、4 KPI、筛选+成交表、订单生命周期、期末挂单 | `runs('replay',20)` 15s、`artifact` |
-| 8 | `#/positions` | `web/src/pages/Positions.tsx`（`App.tsx:56-57`） | 持仓（Layout:55） | 4 KPI、回放结束状态、风险包络、利润保护、最近账本 | `runs('replay',15)` 20s、`risk` 30s、`artifact` |
-| 9 | `#/risk` | `web/src/pages/Risk.tsx`（`App.tsx:58-59`） | 风控（Layout:56） | 紧急停止、限额参数、4 KPI、生效限额、拒单、保护行为、审计 | `risk` 20s、`audit(50)` 30s、`kill-switch` |
-| 10 | `#/quality` | `web/src/pages/Quality.tsx`（`App.tsx:60-61`） | 数据质量（Layout:57）；页内另有 `h1`：`{symbol} 数据集完整性`（`Quality.tsx:122`） | 4 KPI、6 项完整性检查、价格与缺口、合约过滤器、资金费、时段 | `quality` |
-| 11 | `#/settings` | `web/src/pages/Settings.tsx`（`App.tsx:62-63` else 兜底） | 设置（Layout:58） | 连接、执行模式、审计、服务端、路径、紧急停止、关于 | `settings`、`audit(30)` 30s、`session` |
+| 7 | `#/binance` | `web/src/pages/Binance.tsx`（`App.tsx:54-55`） | Binance 节点（Layout:54） | 节点健康/写锁徽标、4 KPI、持仓表、挂单表 | `binance/state` 15s（只读，经隧道） |
+| 8 | `#/orders` | `web/src/pages/Orders.tsx`（`App.tsx:54-55`） | 订单与成交（Layout:54） | 任务侧栏、4 KPI、筛选+成交表、订单生命周期、期末挂单 | `runs('replay',20)` 15s、`artifact` |
+| 9 | `#/positions` | `web/src/pages/Positions.tsx`（`App.tsx:56-57`） | 持仓（Layout:55） | 4 KPI、回放结束状态、风险包络、利润保护、最近账本 | `runs('replay',15)` 20s、`risk` 30s、`artifact` |
+| 10 | `#/risk` | `web/src/pages/Risk.tsx`（`App.tsx:58-59`） | 风控（Layout:56） | 紧急停止、限额参数、4 KPI、生效限额、拒单、保护行为、审计 | `risk` 20s、`audit(50)` 30s、`kill-switch` |
+| 11 | `#/quality` | `web/src/pages/Quality.tsx`（`App.tsx:60-61`） | 数据质量（Layout:57）；页内另有 `h1`：`{symbol} 数据集完整性`（`Quality.tsx:122`） | 4 KPI、6 项完整性检查、价格与缺口、合约过滤器、资金费、时段 | `quality` |
+| 12 | `#/settings` | `web/src/pages/Settings.tsx`（`App.tsx:62-63` else 兜底） | 设置（Layout:58） | 连接、执行模式、审计、服务端、路径、紧急停止、关于 | `settings`、`audit(30)` 30s、`session` |
 
 非路由页：`Login`（`web/src/App.tsx:38`，`!session` 时渲染；h1 `解锁研究终端`，`web/src/pages/Login.tsx:98`）；加载态 `Splash`（`App.tsx:18-31`）。页面组件无独立路由级 `<h1>`（Quality 除外），顶栏 h1 统一取 `TITLES[route]`（`web/src/components/Layout.tsx:402`）。
 
-**导航依据**：`NAV` 共 11 条，含 `mobile` 布尔（`web/src/components/Layout.tsx:33-45`）。
+**导航依据**：`NAV` 共 12 条，含 `mobile` 布尔（`web/src/components/Layout.tsx:33-45`）。
 
 | 入口 | 项数 | 具体项 | 代码位置 |
 | --- | --- | --- | --- |
 | 桌面侧边栏（`lg`≥1024px） | 11 | 总览/行情/策略/回测实验室/模拟盘/实盘/订单与成交/持仓/风控/数据质量/设置 | 渲染 `NAV.map`（`Layout.tsx:341-360`），容器 `hidden … lg:flex w-[228px]`（`Layout.tsx:330`） |
 | 移动底部导航（`lg` 以下） | 5 个按钮（4 页面 + 更多） | 总览/行情/回测/风控/更多 | `NAV.filter(item=>item.mobile)`（`Layout.tsx:326`）；`mobile:true` 仅 overview/market/backtest/risk（Layout:34,35,37,42）；底栏渲染 `Layout.tsx:434-460` |
 | 移动“更多”抽屉 | 11（全部 NAV，3 列网格） | 上述 11 项 + `仅研究` Badge + 退出登录 | `Layout.tsx:464-500`（`NAV.map` 在 470） |
-| 命令面板（⌘K/Ctrl+K） | 11 页面 + N 交易对 + kill switch + logout | `前往{label}`、`切换交易对至 {symbol}`、`触发/解除紧急停止`、`退出登录` | `Layout.tsx:181-201,311-320` |
+| 命令面板（⌘K/Ctrl+K） | 12 页面 + N 交易对 + kill switch + logout | `前往{label}`、`切换交易对至 {symbol}`、`触发/解除紧急停止`、`退出登录` | `Layout.tsx:181-201,311-320` |
 
 其他导航事实：移动项文字 `item.short ?? item.label.split(' ')[0]`（Layout:447）；顶栏交易对下拉仅在 `symbols.length>1` 时渲染为 `<select>`（Layout:79-102）；底部导航固定定位并带 `env(safe-area-inset-bottom)`（Layout:432-433）；抽屉同理 `calc(env(safe-area-inset-bottom)+72px)`（Layout:467）。
 
@@ -108,7 +109,7 @@
 | Settings（`#/settings`） | `api.settings()`、`api.audit(30)` 30s、`api.session()`（`Settings.tsx:47-48,69`） | `version/symbol/symbols/intervals/modes/kill_switch`、`auth.mode/token_hint/cookie`、`paths.data/var/web/web_built`、`server.host/port/cors_origins/uptime_s` | 服务器地址 `inputMode=url`、令牌 `type=password`（101-121）；保存并重连（58-77）；退出登录、kill Toggle | 0 |
 | Login（非路由） | `api.health()`（`Login.tsx:21`，server 变化时重跑） | 服务端版本提示（154-157） | 令牌 `type=password` + `autoFocus`（104-113）；服务器地址折叠（116-142） | 0 |
 
-统计：11 个页面中 **4 个调用图表**（Overview、Market、Backtest、Paper），图表库统一为 `lightweight-charts`；页面最多 2 个图表实例。页面数据轮询集中在 3s（paper）到 60s（overview）。
+统计：12 个页面中 **4 个调用图表**（Overview、Market、Backtest、Paper），图表库统一为 `lightweight-charts`；页面最多 2 个图表实例。页面数据轮询集中在 3s（paper）到 60s（overview）。
 
 ## 4. api.ts 全量函数表
 
@@ -338,9 +339,9 @@ WebView 设置（`MainActivity.java:255-330`）：调试开关 `setWebContentsDe
 
 | 旧说法（来源） | 实际（当前代码） |
 | --- | --- |
-| “9 页”（`02-开发进度与变更记录.md:52,72,80`、`03-部署与运维手册.md:190`、`04-测试手册.md:81,121`、`06-下一步与待办.md:14,21,60,99`、`vault/gridtrade-项目交接总览-2026-11-16.md`） | **11 条路由/11 页**（`web/src/router.ts:3-15`、`web/src/App.tsx:42-63`） |
-| “10 个 hash 路由”，表内缺 `#/live`（`01-项目总览与架构.md:44-57`） | 11 条，含 `#/live`（`router.ts:8`；`App.tsx:52-53`） |
-| “10 条路由（overview/…/strategy）”漏 live（`04-测试手册.md:58`） | 11 条，列表含 `live`（`router.ts:3-15`） |
+| “9 页”（`02-开发进度与变更记录.md:52,72,80`、`03-部署与运维手册.md:190`、`04-测试手册.md:81,121`、`06-下一步与待办.md:14,21,60,99`、`vault/gridtrade-项目交接总览-2026-11-16.md`） | **12 条路由/12 页**（`web/src/router.ts:3-15`、`web/src/App.tsx:42-63`） |
+| “10 个 hash 路由”，表内缺 `#/live`（`01-项目总览与架构.md:44-57`） | 12 条，含 `#/live`、`#/binance`（`router.ts:8`；`App.tsx:52-53`） |
+| “10 条路由（overview/…/strategy）”漏 live（`04-测试手册.md:58`） | 12 条，列表含 `live`、`binance`（`router.ts:3-15`） |
 | “更多抽屉内 9 页/列全部 9 页”（`01-项目总览与架构.md:60`、`04-测试手册.md:81`） | 抽屉渲染全部 **11** 项（`Layout.tsx:470`）；底栏确为 4 页面 + “更多”=5 按钮（`Layout.tsx:326,434-460`） |
 | 历史笔记称 APK 默认地址已改为/硬编码为 `http://81.71.71.131:8000`（`05-问题与决策记录.md:35`、`vault/gridtrade-项目交接总览:52`） | 源码默认仍是 `http://10.0.2.2:8000`（`apk/build.sh:37`）；公网地址由未入库的 `apk/.env` 注入，模板见 `apk/.env.example:4` |
 | “调试开关 `MainActivity.java:252`”（历史笔记/旧报告行号） | 当前在 `apk/src/com/gridtrade/panel/MainActivity.java:256`（`setWebContentsDebuggingEnabled(true)`） |

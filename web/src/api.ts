@@ -325,6 +325,69 @@ export interface LiveOrderInput {
   reduce_only?: boolean
 }
 
+// -- Binance execution node (Tokyo, tunnel-only, read-only from the panel) ----
+
+export interface BinanceNodeHealth {
+  ok: boolean
+  configured: boolean
+  trading_enabled: boolean
+  base_url: string
+  kill_switch: boolean
+  server_offset_ms: number
+  position_mode?: string
+  dual_side_position?: boolean | null
+  reachable: boolean
+  server_time?: { serverTime: number }
+  error?: string
+}
+
+export interface BinanceAccountView {
+  feeTier?: number
+  canTrade?: boolean
+  canDeposit?: boolean
+  canWithdraw?: boolean
+  multiAssetsMargin?: boolean
+  totalWalletBalance?: string
+  availableBalance?: string
+  totalUnrealizedProfit?: string
+  totalPositionInitialMargin?: string
+  totalOpenOrderInitialMargin?: string
+}
+
+export interface BinancePositionView {
+  symbol: string
+  positionAmt: string
+  entryPrice: string
+  markPrice?: string
+  unRealizedProfit?: string
+  positionSide?: string
+  leverage?: string
+  liquidationPrice?: string
+}
+
+export interface BinanceOrderView {
+  orderId: number
+  symbol: string
+  side: string
+  type: string
+  price: string
+  origQty: string
+  executedQty?: string
+  status: string
+  positionSide?: string
+  time?: number
+  reduceOnly?: boolean
+}
+
+export interface BinanceState {
+  node_url: string
+  health?: BinanceNodeHealth
+  account?: { ok: boolean; account: BinanceAccountView }
+  positions?: { ok: boolean; positions: BinancePositionView[] }
+  orders?: { ok: boolean; orders: BinanceOrderView[] }
+  errors?: Record<string, string>
+}
+
 export interface Fill {
   ts: string
   side: string
@@ -772,6 +835,12 @@ export const api = {
     request<{ order: Record<string, unknown> }>(`/api/live/positions/${encodeURIComponent(contract)}/close`, {
       method: 'POST',
     }),
+
+  binanceHealth: () =>
+    request<{ ok: boolean; node_url: string; health: BinanceNodeHealth }>('/api/binance/health'),
+
+  binanceState: (symbol?: string) =>
+    request<BinanceState>(`/api/binance/state${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`),
 }
 
 export function streamUrl(symbol?: string): string {
