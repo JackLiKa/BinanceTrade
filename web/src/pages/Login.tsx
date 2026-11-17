@@ -76,7 +76,7 @@ export function Login() {
           </div>
           <ul className="space-y-3 text-[11.5px] text-muted">
             <li className="flex items-center gap-2.5">
-              <ShieldCheck size={14} className="text-up" /> 仅研究与回放
+              <ShieldCheck size={14} className="text-up" /> 回测 · 模拟盘 · 只读实盘分析
             </li>
             <li className="flex items-center gap-2.5">
               <Server size={14} className="text-info" /> 运行在本机或 Tailscale
