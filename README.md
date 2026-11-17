@@ -258,6 +258,8 @@ cp apk/.env.example apk/.env
 - [问题与决策记录](docs/memory/05-问题与决策记录.md)
 - [下一步与待办](docs/memory/06-下一步与待办.md)
 - [外部接口清单与官方文档对照](docs/memory/07-外部接口清单与官方文档对照.md)
+- [对话与决策日志（2026-11-17）](docs/memory/08-对话与决策日志-2026-11-17.md)
+- [今日改动总览（2026-11-17）](docs/memory/09-今日改动总览-2026-11-17.md)
 - [记忆库原始笔记](docs/memory/vault/)
 
 仓库不包含令牌（`var/token`）、行情数据（`research/data/`）、签名密钥（`apk/*.jks`）
