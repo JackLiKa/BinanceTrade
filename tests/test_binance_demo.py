@@ -54,6 +54,7 @@ def make_config(**overrides: Any) -> BinanceDemoConfig:
         "max_position_notional": 3000.0,
         "max_open_orders": 10,
         "kill_switch_file": "",
+        "position_mode": "oneway",
     }
     values.update(overrides)
     return BinanceDemoConfig(**values)
@@ -396,6 +397,88 @@ def test_place_order_signs_form_body_and_returns_order() -> None:
     assert "signature" not in dict(pairs(book.url.query))
 
 
+def test_hedge_mode_sends_position_side_and_omits_reduce_only() -> None:
+    seen: list[httpx.Request] = []
+    routes: dict[tuple[str, str], Responder] = {
+        ("GET", "/fapi/v1/ticker/bookTicker"): BOOK_TICKER,
+        ("GET", "/fapi/v1/openOrders"): [],
+        ("POST", "/fapi/v1/order"): {"orderId": 100, "status": "NEW"},
+    }
+    client = make_client(handler_for(routes, seen), position_mode="hedge")
+
+    client.place_order("BTCUSDT", "BUY", 0.001, price=50000.0, confirm=True)
+    body = pairs(seen[-1].content)
+    assert value_of(body, "positionSide") == "LONG"
+    assert "reduceOnly" not in dict(body)
+    assert value_of(body, "signature") == expected_signature(body)
+
+    client.place_order(
+        "BTCUSDT", "SELL", 0.001, price=50000.0, reduce_only=True, confirm=True
+    )
+    body = pairs(seen[-1].content)
+    assert value_of(body, "positionSide") == "LONG"  # closing a long
+
+    client.place_order(
+        "BTCUSDT", "BUY", 0.001, price=50000.0, reduce_only=True, confirm=True
+    )
+    body = pairs(seen[-1].content)
+    assert value_of(body, "positionSide") == "SHORT"  # closing a short
+
+
+def test_explicit_position_side_forces_hedge_parameters() -> None:
+    seen: list[httpx.Request] = []
+    routes: dict[tuple[str, str], Responder] = {
+        ("GET", "/fapi/v1/ticker/bookTicker"): BOOK_TICKER,
+        ("GET", "/fapi/v1/openOrders"): [],
+        ("POST", "/fapi/v1/order"): {"orderId": 101, "status": "NEW"},
+    }
+    client = make_client(handler_for(routes, seen), position_mode="oneway")
+    client.place_order(
+        "BTCUSDT", "SELL", 0.001, price=50000.0, confirm=True, position_side="short"
+    )
+    body = pairs(seen[-1].content)
+    assert value_of(body, "positionSide") == "SHORT"
+    assert "reduceOnly" not in dict(body)
+
+
+def test_auto_mode_detects_hedge_once() -> None:
+    seen: list[httpx.Request] = []
+    routes: dict[tuple[str, str], Responder] = {
+        ("GET", "/fapi/v1/ticker/bookTicker"): BOOK_TICKER,
+        ("GET", "/fapi/v1/openOrders"): [],
+        ("GET", "/fapi/v1/positionSide/dual"): {"dualSidePosition": True},
+        ("POST", "/fapi/v1/order"): {"orderId": 102, "status": "NEW"},
+    }
+    client = make_client(handler_for(routes, seen), position_mode="auto")
+
+    assert client.dual_side_position() is True
+    assert client.dual_side_position() is True  # cached
+    client.place_order("BTCUSDT", "BUY", 0.001, price=50000.0, confirm=True)
+    body = pairs(seen[-1].content)
+    assert value_of(body, "positionSide") == "LONG"
+    dual_calls = [
+        request for request in seen if request.url.path == "/fapi/v1/positionSide/dual"
+    ]
+    assert len(dual_calls) == 1
+
+
+def test_auto_mode_falls_back_to_oneway_when_detection_fails() -> None:
+    seen: list[httpx.Request] = []
+    routes: dict[tuple[str, str], Responder] = {
+        ("GET", "/fapi/v1/ticker/bookTicker"): BOOK_TICKER,
+        ("GET", "/fapi/v1/openOrders"): [],
+        ("GET", "/fapi/v1/positionSide/dual"): httpx.Response(
+            404, json={"code": -1102, "msg": "not supported"}
+        ),
+        ("POST", "/fapi/v1/order"): {"orderId": 103, "status": "NEW"},
+    }
+    client = make_client(handler_for(routes, seen), position_mode="auto")
+    client.place_order("BTCUSDT", "BUY", 0.001, price=50000.0, confirm=True)
+    body = pairs(seen[-1].content)
+    assert "positionSide" not in dict(body)
+    assert value_of(body, "reduceOnly") == "false"
+
+
 def test_cancel_and_leverage_are_gated_and_signed() -> None:
     seen: list[httpx.Request] = []
     routes: dict[tuple[str, str], Responder] = {
@@ -476,6 +559,48 @@ def test_503_unknown_execution_status_is_not_retried() -> None:
 # ---------------------------------------------------------------------------
 # reads / status
 # ---------------------------------------------------------------------------
+
+
+def test_exchange_info_filters_symbol_locally_and_flattens_filters() -> None:
+    """Binance ignores the ``symbol`` query param, so the client must filter locally."""
+    seen: list[httpx.Request] = []
+    payload = {
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "filters": [
+                    {"filterType": "PRICE_FILTER", "tickSize": "0.10"},
+                    {"filterType": "LOT_SIZE", "stepSize": "0.001", "minQty": "0.001"},
+                    {"filterType": "MIN_NOTIONAL", "notional": "100"},
+                ],
+            },
+            {
+                "symbol": "DOGEUSDT",
+                "filters": [
+                    {"filterType": "PRICE_FILTER", "tickSize": "0.000010"},
+                    {"filterType": "LOT_SIZE", "stepSize": "1", "minQty": "1"},
+                    {"filterType": "MIN_NOTIONAL", "notional": "5"},
+                ],
+            },
+        ]
+    }
+    client = make_client(handler_for({("GET", "/fapi/v1/exchangeInfo"): payload}, seen))
+
+    filtered = client.exchange_info("dogeusdt")
+    assert [row["symbol"] for row in filtered["symbols"]] == ["DOGEUSDT"]
+    assert client.exchange_info()["symbols"][0]["symbol"] == "BTCUSDT"
+    assert client.symbol_filters("DOGEUSDT") == {
+        "step": 1.0,
+        "min_qty": 1.0,
+        "tick": 0.00001,
+        "min_notional": 5.0,
+    }
+    with pytest.raises(BinanceError) as excinfo:
+        client.exchange_info("NOPEUSDT")
+    assert excinfo.value.code == -1121
+    for request in seen:
+        assert request.url.path == "/fapi/v1/exchangeInfo"
+        assert "symbol=" not in request.url.query.decode()
 
 
 def test_read_methods_parse_responses() -> None:

@@ -122,6 +122,20 @@ def _env_str(name: str, default: str) -> str:
     return raw.strip()
 
 
+POSITION_MODES = ("auto", "oneway", "hedge")
+
+
+def _position_mode_env() -> str:
+    """``BINANCE_POSITION_MODE``: ``auto`` (detect), ``oneway`` or ``hedge``.
+
+    Hedge mode requires ``positionSide=LONG/SHORT`` on every order and forbids
+    ``reduceOnly``; one-way mode is the opposite. ``auto`` asks
+    ``GET /fapi/v1/positionSide/dual`` once per client.
+    """
+    raw = _env_str("BINANCE_POSITION_MODE", "auto").lower()
+    return raw if raw in POSITION_MODES else "auto"
+
+
 # ---------------------------------------------------------------------------
 # value helpers
 # ---------------------------------------------------------------------------
@@ -196,6 +210,7 @@ class BinanceDemoConfig:
     max_position_notional: float = DEFAULT_MAX_POSITION_NOTIONAL
     max_open_orders: int = DEFAULT_MAX_OPEN_ORDERS
     kill_switch_file: str = DEFAULT_KILL_SWITCH_FILE
+    position_mode: str = "auto"  # auto | oneway | hedge
 
     @property
     def configured(self) -> bool:
@@ -219,6 +234,7 @@ class BinanceDemoConfig:
             ),
             max_open_orders=_env_int("BINANCE_MAX_OPEN_ORDERS", DEFAULT_MAX_OPEN_ORDERS),
             kill_switch_file=_env_str("BINANCE_KILL_SWITCH_FILE", DEFAULT_KILL_SWITCH_FILE),
+            position_mode=_position_mode_env(),
         )
 
 
@@ -266,6 +282,7 @@ class BinanceDemoClient:
         self.cfg = cfg
         self._clock = clock
         self.server_time_offset_ms: int = 0
+        self._dual_side: bool | None = None
         self._owns_http = http is None
         if http is None:
             headers = {"X-MBX-APIKEY": cfg.api_key} if cfg.api_key else {}
@@ -411,9 +428,42 @@ class BinanceDemoClient:
         return _as_dict(self._request("GET", "/fapi/v1/time"))
 
     def exchange_info(self, symbol: str | None = None) -> dict[str, Any]:
-        """``GET /fapi/v1/exchangeInfo`` (public): symbol filters and metadata."""
-        params = {"symbol": symbol.strip().upper()} if symbol else None
-        return _as_dict(self._request("GET", "/fapi/v1/exchangeInfo", params))
+        """``GET /fapi/v1/exchangeInfo`` (public): symbol filters and metadata.
+
+        Binance currently **ignores the ``symbol`` query parameter** on this
+        endpoint and always returns the full symbol list, so the filter is applied
+        locally here. The returned dict keeps the API shape (``symbols`` list).
+        """
+        data = _as_dict(self._request("GET", "/fapi/v1/exchangeInfo", None))
+        if not symbol:
+            return data
+        wanted = symbol.strip().upper()
+        rows = data.get("symbols")
+        if isinstance(rows, list):
+            data = {**data, "symbols": [r for r in rows if isinstance(r, dict) and r.get("symbol") == wanted]}
+            if not data["symbols"]:
+                raise BinanceError(f"symbol {wanted} not found in exchangeInfo", code=-1121)
+        return data
+
+    def symbol_filters(self, symbol: str) -> dict[str, float]:
+        """Flatten the useful numeric filters for ``symbol``.
+
+        Returns ``step`` (LOT_SIZE stepSize), ``min_qty``, ``tick``
+        (PRICE_FILTER tickSize) and ``min_notional`` (MIN_NOTIONAL notional).
+        """
+        rows = self.exchange_info(symbol).get("symbols") or []
+        if not rows:
+            raise BinanceError(f"symbol {symbol} not found", code=-1121)
+        filters = {f.get("filterType"): f for f in rows[0].get("filters", [])}
+        lot = filters.get("LOT_SIZE") or {}
+        price_filter = filters.get("PRICE_FILTER") or {}
+        notional = filters.get("MIN_NOTIONAL") or {}
+        return {
+            "step": _opt_float(lot.get("stepSize")) or 0.0,
+            "min_qty": _opt_float(lot.get("minQty")) or 0.0,
+            "tick": _opt_float(price_filter.get("tickSize")) or 0.0,
+            "min_notional": _opt_float(notional.get("notional")) or 0.0,
+        }
 
     # -- signed reads ----------------------------------------------------
 
@@ -465,6 +515,21 @@ class BinanceDemoClient:
         if symbol:
             params["symbol"] = symbol.strip().upper()
         return _as_list(self._request("GET", "/fapi/v1/userTrades", params, signed=True))
+
+    def dual_side_position(self) -> bool:
+        """``GET /fapi/v1/positionSide/dual``: hedge (dual-side) mode flag.
+
+        Hedge mode accounts must send ``positionSide=LONG|SHORT`` on every order
+        and must **not** send ``reduceOnly``; sending ``BOTH`` or omitting the
+        field is rejected with ``-4061 Order's position side does not match
+        user's setting``. Cached per client instance.
+        """
+        if self._dual_side is None:
+            data = _as_dict(
+                self._request("GET", "/fapi/v1/positionSide/dual", signed=True)
+            )
+            self._dual_side = bool(data.get("dualSidePosition"))
+        return self._dual_side
 
     # -- write gates -----------------------------------------------------
 
@@ -528,6 +593,7 @@ class BinanceDemoClient:
         reduce_only: bool = False,
         client_order_id: str | None = None,
         confirm: bool = False,
+        position_side: str | None = None,
     ) -> dict[str, Any]:
         """Place one demo/testnet order after every lock and risk control passes.
 
@@ -536,6 +602,12 @@ class BinanceDemoClient:
         notional above ``max_order_notional``, limit price more than
         :data:`MAX_PRICE_DEVIATION` away from the book mid, or the number of open
         orders already at ``max_open_orders``.
+
+        Hedge-mode accounts (``BINANCE_POSITION_MODE=hedge`` or detected ``auto``)
+        need ``positionSide``: it is derived from ``side``/``reduce_only`` when not
+        given (BUY opens LONG, SELL opens SHORT; reduce-only is the opposite) and
+        ``reduceOnly`` is omitted, because Binance rejects it in hedge mode.
+        One-way accounts must not send ``positionSide`` at all.
         """
         self._ensure_trading(confirm=confirm)
         cfg = self.cfg
@@ -602,7 +674,32 @@ class BinanceDemoClient:
         if limit_price is not None:
             params["price"] = _num_str(limit_price)
             params["timeInForce"] = time_in_force.strip().upper()
-        params["reduceOnly"] = "true" if reduce_only else "false"
+
+        mode = (cfg.position_mode or "auto").strip().lower()
+        requested_side = position_side.strip().upper() if position_side else None
+        if requested_side is not None:
+            if requested_side not in {"LONG", "SHORT"}:
+                raise BinanceError(
+                    f"position_side must be LONG or SHORT, got {position_side!r}", code=-1
+                )
+            mode = "hedge"
+        if mode == "auto":
+            try:
+                mode = "hedge" if self.dual_side_position() else "oneway"
+            except BinanceError as exc:
+                logger.warning(
+                    "cannot detect position mode (%s); assuming one-way", exc
+                )
+                mode = "oneway"
+        if mode == "hedge":
+            if requested_side is None:
+                if side_u == "BUY":
+                    requested_side = "SHORT" if reduce_only else "LONG"
+                else:
+                    requested_side = "LONG" if reduce_only else "SHORT"
+            params["positionSide"] = requested_side
+        else:
+            params["reduceOnly"] = "true" if reduce_only else "false"
         if client_order_id:
             params["newClientOrderId"] = client_order_id
 
@@ -654,6 +751,8 @@ class BinanceDemoClient:
             "base_url": self.cfg.base_url,
             "kill_switch": self._kill_switch_active(),
             "server_offset_ms": self.server_time_offset_ms,
+            "position_mode": self.cfg.position_mode,
+            "dual_side_position": self._dual_side,
             "reachable": False,
         }
         try:
