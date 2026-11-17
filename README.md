@@ -51,6 +51,12 @@ cd web && pnpm dev     # http://localhost:5173
 .venv/bin/python -m gridtrade.api
 ```
 
+### 在线实例
+
+当前部署在 `http://81.71.71.131:8000`（systemd 常驻，令牌在服务器的 `var/token`）。
+该实例目前是明文 HTTP，仅建议临时使用；公网长期使用应加 HTTPS 反向代理，详见
+[docs/memory/03-部署与运维手册.md](docs/memory/03-部署与运维手册.md)。
+
 ### 登录
 
 首次启动会生成随机令牌写入 `var/token`（权限 `0600`）。把它粘贴到登录页，或用
@@ -158,7 +164,7 @@ adb install -r apk/gridtrade.apk
 
 首次启动时 Activity 会要求填写服务器地址与令牌；进入面板后，在页面历史尽头按返回键
 可重新打开“服务器与令牌”菜单。
-默认 `http://10.0.2.2:8000`（模拟器访问宿主机的别名），两者都存入 `SharedPreferences`。
+默认 `http://81.71.71.131:8000`（当前部署地址），两者都存入 `SharedPreferences`。
 令牌还会同步写入 WebView 的 `localStorage`，避免 SPA 再次询问。
 
 注意：

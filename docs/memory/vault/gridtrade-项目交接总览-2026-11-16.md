@@ -6,18 +6,22 @@ tags:
   - deployment
   - webview
   - backtest
+  - https-pending
 verified: true
 created: '2026-11-16T19:06:16+08:00'
+updated: '2026-11-17T13:00:13+08:00'
 ---
 
-# gridtrade 项目交接总览（2026-11-16）
+# gridtrade 项目交接总览（2026-11-17 更新）
 
-**重点：项目已完成“引擎修正 → 中文面板 → 真机 APK → 服务器部署 → GitHub 推送”全链路；Web 与 APK 功能测试全部通过。剩余阻塞项是对外访问方式与 APK 默认地址。**
+**重点：全链路已完成并在公网运行：引擎修正 → 中文面板 → 真机 APK → 服务器部署 → GitHub 推送 → 公网 HTTP 上线 → APK 默认地址切换。** 当前唯一高优先级待办是把明文 HTTP 升级为 HTTPS。
 
-- 代码仓库（public）：https://github.com/JackLiKa/BinanceTrade ，提交 `7a0a604`（main）
+- 代码仓库（public）：https://github.com/JackLiKa/BinanceTrade
 - 本地目录：`/Users/user/Dev/bnapi`
-- 服务器：`ubuntu@81.71.71.131:22`，Ubuntu 24.04.4，Python 3.12.3，3.7GB 内存，磁盘剩余约 5.7GB
-- 服务：systemd `gridtrade`，监听 `127.0.0.1:8000`，开机自启，内存 cgroup 上限 1.8G（实测约 290MB）
+- 在线实例：**http://81.71.71.131:8000**（systemd 常驻，明文 HTTP，临时方案）
+- 服务器：`wmac@81.71.71.131:22`（日常入口，sudo 需密码；`ubuntu@` 公钥仍在），Ubuntu 24.04.4，Python 3.12.3，3.7GB 内存，磁盘剩余约 5.7GB
+- 服务：systemd `gridtrade`，监听 `0.0.0.0:8000`，开机自启，cgroup 上限 1.8G（实测约 290MB）
+- 令牌：服务器 `~/gridtrade/var/token`（值不入库、不写入文档）
 - 完整交接文档：仓库 `docs/memory/`（README、架构、进度、部署、测试、问题决策、待办）+ `docs/memory/vault/` 原始笔记
 
 ## 一、产品与架构
@@ -28,41 +32,43 @@ created: '2026-11-16T19:06:16+08:00'
 
 9 页：`#/overview`、`#/market`、`#/strategy`、`#/backtest`、`#/orders`、`#/positions`、`#/risk`、`#/quality`、`#/settings`。
 
-认证：Bearer / X-API-Token / `gt_token` httpOnly Cookie；WebSocket `?token=`。令牌在 `var/token`（0600，首次启动自动生成），可用 `GRIDTRADE_TOKEN` 覆盖。不要把令牌入库或外传。
+认证：Bearer / X-API-Token / `gt_token` httpOnly Cookie；WebSocket `?token=`。令牌首次启动自动生成，可用 `GRIDTRADE_TOKEN` 覆盖。
 
 关键 API：`/api/health`、`/api/auth/login|logout`、`/api/session`、`/api/dataset/{symbols,quality}`、`/api/market/{snapshot,candles,funding}`、`/api/overview`、`/api/runs/{replay,walkforward,sweep}`、`/api/runs`、`/api/runs/{id}`、`/api/runs/{id}/artifact`（仅 succeeded）、`/api/runs/{id}/cancel`、`/api/risk`、`/api/settings`、`/api/settings/kill-switch`、`/api/audit`、`WS /ws`、`GET /{path}`（SPA 回退）。
 
 数据：GOOGLUSDT 永续 1m，337,778 根（2026-03-26..11-16，约 235 天），718 次资金费，覆盖 100%；`research/data/` 约 14MB，不入库，用 `research/fetch.py --symbol GOOGLUSDT` 拉取。
 
-## 二、本次完成与修复
+## 二、完成与修复
 
 1. **双引擎 bug 修复**：旧模型跨边界回补价记低一整格（虚假收益），改为状态机撮合（high/low 真正触达才成交，上涨 bar 只卖、下跌 bar 只买）；资金费符号由 `abs(pos)*price*rate` 改为 `cash -= pos*price*rate`。
 2. **中文化**：9 页、登录页、命令面板、共享组件、后端模式/任务消息；英文 README 保留 `README.en.md`。
 3. **移动 WebView 布局**：360×800 / font_scale 1.3 无横向溢出；fixed 表面不透明；图表时间轴留白；月度表横向滚动。
-4. **APK 原生中文化**：首启设置页、错误页、面板菜单、退出确认。
-5. **返回键缺陷**：主题为 NoActionBar，原生菜单不可达 → 删除 ActionBar 菜单，改为 `onBackPressed`：有 WebView 历史则后退，否则弹菜单（重新加载/服务器与令牌/退出登录/退出应用）。`MainActivity.java:401/413`。
+4. **APK 原生中文化**：首启设置页、错误页、面板菜单、退出确认；设置页提示已更新为公网/HTTPS 建议。
+5. **返回键缺陷**：主题为 NoActionBar，原生菜单不可达 → 删除 ActionBar 菜单，改为 `onBackPressed`：有 WebView 历史则后退，否则弹菜单（重新加载/服务器与令牌/退出登录/退出应用）。
 6. **artifact 409 竞态**：切换历史任务时旧 run 的 succeeded 状态触发新 runId 请求 → `useArtifact(runId, run)` 要求 `run.id === runId && status === 'succeeded'`（`web/src/hooks.ts:103`）。
 7. **旧产物残留**：选中已取消/排队任务仍显示上一任务图表 → 未就绪时 `data=null`。
-8. **部署**：rsync 到 `~/gridtrade`，venv 安装依赖，上传数据与 `web/dist`，systemd 常驻；SSH 隧道回归 9 页 + 真实回放（14 图）通过，无 4xx/5xx、无异常。
-9. **GitHub**：提交 `7a0a604`，125 个文件；`.gitignore` 排除 `var/`、`research/data/`、`.venv/`、`web/node_modules/`、`web/dist/`、`apk/*.jks`、`apk/.idea/`。
+8. **部署**：rsync 到 `~/gridtrade`，venv 安装依赖，上传数据与 `web/dist`，systemd 常驻。
+9. **公网开通（2026-11-17）**：ufw 放行 8000（v4+v6），`GRIDTRADE_HOST=0.0.0.0`，公网 `http://81.71.71.131:8000` 返回 200；登录/错误令牌、9 页、回放（−0.04%，14 图）、WebSocket、APK 真机公网访问全部验证通过。
+10. **APK 默认地址**：`DEFAULT_SERVER` 改为 `http://81.71.71.131:8000`，重建（25,409 字节）并安装真机；首启默认值、令牌注入、9 页与结果页验证通过。
+11. **GitHub**：已推送代码与 `docs/memory/` 全部交接文档；`.gitignore` 排除 `var/`、`research/data/`、`.venv/`、`web/node_modules/`、`web/dist/`、`apk/*.jks`、`apk/.idea/`。
 
 ## 三、验收结论
 
 - 桌面 Web：9 路由、回放/取消/前向滚动/参数扫描、订单筛选搜索、持仓、风控 kill switch + 审计、质量重扫、设置保存/登出/错误令牌、390px 无溢出、⌘K 面板；全程无异常。
 - 真机（OnePlus PJA110，Android 16）：底部导航 + 更多 9 页、行情周期、订单、持仓、风控、设置认证、结果页 14 图、前向滚动、扫描、原生中文页/菜单/返回键；全部通过。
-- pytest 最近 53 passed；`pnpm build`（含 tsc）通过。
-- 部署实例：服务 active、NRestarts=0、内存约 290MB。
+- 公网实例（HTTP）：`/api/health` 200、错误令牌 401、9 页与真实回放通过，无 4xx/5xx、无异常。
+- pytest 最近 53 passed；`pnpm build`（含 tsc）通过；服务 `NRestarts=0`。
 
 ## 四、已知限制（重点）
 
-- APK 默认服务器 `http://10.0.2.2:8000` 仅模拟器可用；真机需手填或 `adb reverse` 后用 127.0.0.1。地址确定后应改 `MainActivity.java:44` 重建。
-- `adb reverse` 不随 USB 重连恢复。
-- OPPO/OnePlus 直接 `adb install` 会卡安装引导，用 `pm install-create/write/commit`。
-- WebView 内容不暴露 UIAutomator，需 `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP。
+- **明文 HTTP**：公网 `http://81.71.71.131:8000` 的令牌与页面可被中间人截获；仅建议临时使用，尽快换域名 + HTTPS。
 - 服务器无法访问 `fapi.binance.com`（超时），实时行情回退数据集，K 线延迟明显（约 123 分钟）；非前端 bug。
-- 当前未对外暴露；ufw 仅放行 22/80/3010/3000，443 未开；机器上已有 nginx 与其他业务，勿擅改。
+- `adb reverse` 不随 USB 重连恢复（公网地址下不再需要）。
+- OPPO/OnePlus 直接 `adb install` 会卡安装引导，可用 `pm install -r -t`；分段 `install-commit` 曾返回 `Failure[-99]`。
+- WebView 内容不暴露 UIAutomator，需 `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP。
 - WebView 调试在 release 包中仍开启（`MainActivity.java:252`），分发前关闭。
 - 签名密钥未入库；`build.sh` 口令硬编码；换机重建会生成新密钥，旧包需卸载后安装。
+- 该机器已有 nginx 与其他业务，改 ufw/nginx 需谨慎；443 尚未放行。
 
 ## 五、策略研究结论（避免重复踩坑）
 
@@ -70,11 +76,10 @@ created: '2026-11-16T19:06:16+08:00'
 
 ## 六、下一步（按优先级）
 
-1. **P0 访问方式**（待用户选择）：域名+HTTPS（推荐，需 DNS 与 443 放行、`GRIDTRADE_SECURE_COOKIE=1`）／开放 IP:8000（明文，仅临时）／仅 SSH 隧道。
-2. **P0 APK 默认地址**：改用正式地址重建、安装、回归。
-3. **P1 实时行情**：解决服务器出口或换行情源，并验证 data source 与延迟。
-4. **P1 测试资产化 + CI**：把 `/tmp/gtweb/*.mjs` CDP 脚本整理进 `tests/e2e/`；GitHub Actions 跑 pytest 与 web build。
-5. **P2 运维**：备份 `var/`、日志轮转、内存/磁盘监控、令牌轮换、关闭 WebView 调试、保存 keystore。
+1. **P0 HTTPS**：域名解析到 81.71.71.131、放行 443、nginx/Caddy 反代 `127.0.0.1:8000`、`GRIDTRADE_SECURE_COOKIE=1`，验证后删除 ufw 8000 规则。
+2. **P1 实时行情**：解决服务器出口或换行情源，并验证 data source 与延迟。
+3. **P1 测试资产化 + CI**：把 CDP 验收脚本整理进 `tests/e2e/`；GitHub Actions 跑 pytest 与 web build。
+4. **P2 运维**：备份 `var/`、日志轮转、内存/磁盘监控、令牌轮换、关闭 WebView 调试、保存 keystore。
 
 ## 七、最小恢复步骤（新电脑）
 

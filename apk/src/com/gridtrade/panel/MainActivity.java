@@ -41,7 +41,7 @@ import org.json.JSONTokener;
 public class MainActivity extends Activity {
     private static final String TAG = "Gridtrade";
     private static final String PREFS = "gridtrade";
-    private static final String DEFAULT_SERVER = "http://10.0.2.2:8000";
+    private static final String DEFAULT_SERVER = "http://81.71.71.131:8000";
 
     private static final int MATCH_PARENT = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP_CONTENT = ViewGroup.LayoutParams.WRAP_CONTENT;
@@ -144,8 +144,8 @@ public class MainActivity extends Activity {
         add(body, connect, 50, 24);
 
         TextView tip = text(
-                "\u2022 模拟器：10.0.2.2 可访问宿主机。\n"
-                        + "\u2022 手机：使用局域网或 Tailscale 地址，建议走 HTTPS。\n"
+                "\u2022 公网地址需要在服务端放行端口；明文 HTTP 仅建议临时使用。\n"
+                        + "\u2022 手机与电脑使用同一地址，长期使用建议加 HTTPS 反向代理。\n"
                         + "\u2022 面板单独保存本设备的令牌，与网页端互不影响。",
                 10.5f, FAINT, Typeface.NORMAL);
         tip.setLineSpacing(0, 1.45f);
