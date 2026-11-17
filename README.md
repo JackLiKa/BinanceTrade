@@ -179,12 +179,18 @@ cp .env.example .env
 
 ## 研究数据
 
-面板读取币安 USDⓈ-M 永续合约的分钟级 parquet 文件
-（`GOOGLUSDT_1m.parquet`、`GOOGLUSDT_funding.parquet`）。刷新方式：
+面板读取币安 USDⓈ-M 永续合约的分钟级 parquet 文件（`<SYMBOL>_1m.parquet`、
+`<SYMBOL>_funding.parquet`、`<SYMBOL>_meta.json`）。当前内置
+`GOOGLUSDT / SKHYUSDT / SPCXUSDT / AMGNUSDT` 四个数据集；数据集存在几个，页面顶部的
+交易对下拉就有几个。新增/刷新某个合约：
 
 ```bash
-.venv/bin/python research/fetch.py --symbol GOOGLUSDT
+.venv/bin/python research/fetch.py --symbol SKHYUSDT
 ```
+
+抓取需要能访问 `fapi.binance.com`（服务器出口被墙，通常在本地抓好后上传
+`research/data/`）。切换交易对后，总览、行情、策略、回测、订单、持仓、风控、数据质量
+都会使用所选合约；选择记忆在 `localStorage['gridtrade.symbol']`。
 
 任务在两个工作线程上运行，进度写入 SQLite，可在分块之间取消。对于固定的数据集与
 参数组合，回放结果是确定性的。
