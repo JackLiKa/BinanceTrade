@@ -13,6 +13,10 @@ export const DEFAULT_PARAMS: GridParams = {
   taker_fee: 0.0005,
   slip_bp: 0.2,
   intrabar: false,
+  auto: false,
+  auto_interval: 1440,
+  auto_atr_window: 120,
+  auto_target_vol: 0.25,
 }
 
 const KEY = 'gridtrade.params'
@@ -56,6 +60,13 @@ function sanitize(parsed: Partial<GridParams>): Partial<GridParams> {
     out.stop_dd = parsed.stop_dd ?? null
   }
   if (typeof parsed.intrabar === 'boolean') out.intrabar = parsed.intrabar
+  if (typeof parsed.auto === 'boolean') out.auto = parsed.auto
+  for (const key of ['auto_interval', 'auto_atr_window', 'auto_target_vol'] as const) {
+    const value = parsed[key]
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      ;(out as Record<string, unknown>)[key] = value
+    }
+  }
   return out
 }
 

@@ -10,7 +10,8 @@ partial fills and external reconciliation cannot desynchronize it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ..domain.models import Bar, Fill, OrderIntent, OrderType, Side, TimeInForce
@@ -28,6 +29,11 @@ class GridParams:
     reanchor_bars: int | None = None
     group: str = "grid"
     min_edge_bp: float = 0.0
+    # Optional adaptive mode: ATR-based spacing + volatility-capped leverage.
+    auto: bool = False
+    auto_interval: int = 1440
+    auto_atr_window: int = 120
+    auto_target_vol: float = 0.25
 
     def __post_init__(self) -> None:
         if self.spacing_bp <= 0:
@@ -38,6 +44,10 @@ class GridParams:
             raise ValueError("leverage must be positive")
         if self.min_edge_bp < 0:
             raise ValueError("min_edge_bp must be non-negative")
+        if self.auto_interval < 1:
+            raise ValueError("auto_interval must be positive")
+        if self.auto_target_vol <= 0:
+            raise ValueError("auto_target_vol must be positive")
 
 
 class GridStrategy(Strategy):
@@ -57,6 +67,10 @@ class GridStrategy(Strategy):
         self.level: int = 0
         self._bars = 0
         self._pending_reanchor = False
+        self._history: deque[tuple[float, float, float]] = deque(
+            maxlen=max(30, self.params.auto_atr_window)
+        )
+        self._auto_bars = 0
 
     @property
     def group(self) -> str:
@@ -65,7 +79,8 @@ class GridStrategy(Strategy):
     @property
     def strategy_id(self) -> str:
         p = self.params
-        return f"grid/{p.spacing_bp:g}bp/{p.levels}L/{p.leverage:g}x"
+        suffix = "/auto" if p.auto else ""
+        return f"grid/{p.spacing_bp:g}bp/{p.levels}L/{p.leverage:g}x{suffix}"
 
     def on_start(self, ctx: StrategyContext) -> list[OrderIntent]:
         self._validate_cost()
@@ -73,6 +88,14 @@ class GridStrategy(Strategy):
         return self._plan()
 
     def on_bar(self, bar: Bar, ctx: StrategyContext) -> list[OrderIntent]:
+        self._history.append((bar.high, bar.low, bar.close))
+        if self.params.auto:
+            self._auto_bars += 1
+            if self._auto_bars >= self.params.auto_interval:
+                plan = self._auto_rebalance(bar, ctx)
+                if plan is not None:
+                    return plan
+
         if self._pending_reanchor:
             if abs(ctx.position_qty) > self._half_size():
                 return [self._flatten_intent(ctx)]
@@ -174,6 +197,60 @@ class GridStrategy(Strategy):
             raise ValueError(
                 f"spacing {spacing:g}bp <= round-trip {round_trip:g}bp + min edge {min_edge:g}bp"
             )
+
+    def _auto_rebalance(self, bar: Bar, ctx: StrategyContext) -> list[OrderIntent] | None:
+        """Adapt spacing/leverage to realized volatility, then re-anchor.
+
+        Rules are deliberately boring and literature-backed:
+        * ATR (Wilder/Chan) scales the grid spacing;
+        * volatility targeting (Carver) caps leverage;
+        * never re-anchor while carrying more than half a unit of inventory:
+          flatten first, exactly like a controlled risk reset.
+        """
+        self._auto_bars = 0
+        if len(self._history) < max(30, self.params.auto_atr_window // 2):
+            return None
+        true_ranges: list[float] = []
+        prev_close: float | None = None
+        for high, low, close in self._history:
+            if prev_close is None:
+                true_ranges.append(high - low)
+            else:
+                true_ranges.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+            prev_close = close
+        atr = sum(true_ranges[-self.params.auto_atr_window :]) / min(
+            len(true_ranges), self.params.auto_atr_window
+        )
+        atr_pct = atr / bar.close if bar.close > 0 else 0.0
+        spacing = max(40.0, min(300.0, atr_pct * 1e4 * 1.2))
+        closes = [item[2] for item in self._history]
+        returns = [
+            closes[index] / closes[index - 1] - 1.0
+            for index in range(1, len(closes))
+            if closes[index - 1] > 0
+        ]
+        if len(returns) >= 20:
+            mean = sum(returns) / len(returns)
+            variance = sum((item - mean) ** 2 for item in returns) / len(returns)
+            realized = (variance ** 0.5) * (365 * 24 * 60) ** 0.5
+            target = min(self.params.leverage, max(0.3, self.params.auto_target_vol / max(realized, 1e-9)))
+        else:
+            target = self.params.leverage
+        old_spacing = self.params.spacing_bp
+        changed = abs(spacing - old_spacing) / max(old_spacing, 1.0) >= 0.15
+        self.params = replace(self.params, spacing_bp=spacing, leverage=round(target, 2))
+        carrying = abs(ctx.position_qty) > self._half_size()
+        if carrying and not changed:
+            # Volatility did not change enough to justify paying fees to
+            # liquidate and re-enter. Keep the existing inventory/grid.
+            return None
+        if carrying:
+            self._pending_reanchor = True
+            return [self._flatten_intent(ctx)]
+        if not changed:
+            return None
+        self._reset(bar.close, ctx)
+        return self._plan()
 
     def _reset(self, anchor: float, ctx: StrategyContext) -> None:
         self.anchor = anchor

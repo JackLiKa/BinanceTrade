@@ -29,6 +29,10 @@ class ResearchParams:
     taker_fee: float = 0.0005
     slip_bp: float = 0.2
     intrabar: bool = False
+    auto: bool = False
+    auto_interval: int = 1440
+    auto_atr_window: int = 120
+    auto_target_vol: float = 0.25
     liquidation_enabled: bool = True
     liquidation_fee: float = 0.005
     insurance_fund_balance: float = 0.0
@@ -40,6 +44,10 @@ class ResearchParams:
             levels=self.levels,
             leverage=self.leverage,
             reanchor_bars=self.reanchor_bars,
+            auto=self.auto,
+            auto_interval=self.auto_interval,
+            auto_atr_window=self.auto_atr_window,
+            auto_target_vol=self.auto_target_vol,
         )
 
     def backtest_config(self) -> BacktestConfig:

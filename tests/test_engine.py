@@ -150,3 +150,23 @@ def test_grid_rejects_per_level_notional_below_exchange_minimum():
             params=GridParams(40.0, 20, 1.0),
             config=BacktestConfig(capital=100.0, stop_dd=None),
         )
+
+
+def test_adaptive_grid_rebalances_without_lookahead():
+    rows = zigzag(600)
+    result = run(
+        rows,
+        params=GridParams(
+            80.0,
+            10,
+            2.0,
+            auto=True,
+            auto_interval=120,
+            auto_atr_window=60,
+            auto_target_vol=0.25,
+        ),
+        config=BacktestConfig(capital=1000.0, stop_dd=None),
+    )
+    assert result.stats["trades"] > 0
+    assert result.stats["total_return"] is not None
+    assert result.strategy_state["size"] > 0

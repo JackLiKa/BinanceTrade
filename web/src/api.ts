@@ -746,6 +746,10 @@ export interface ResearchInput {
   taker_fee: number
   slip_bp: number
   intrabar: boolean
+  auto?: boolean
+  auto_interval?: number
+  auto_atr_window?: number
+  auto_target_vol?: number
 }
 
 const TOKEN_KEY = 'gridtrade.token'

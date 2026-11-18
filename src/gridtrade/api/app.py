@@ -97,6 +97,10 @@ class ResearchRequest(BaseModel):
     taker_fee: float = Field(0.0005, ge=0, le=0.01)
     slip_bp: float = Field(0.2, ge=0, le=100)
     intrabar: bool = False
+    auto: bool = False
+    auto_interval: int = Field(1440, ge=10, le=100_000)
+    auto_atr_window: int = Field(120, ge=20, le=5_000)
+    auto_target_vol: float = Field(0.25, gt=0, le=5)
     liquidation_enabled: bool = True
     liquidation_fee: float = Field(0.005, ge=0, le=0.05)
 
@@ -118,6 +122,10 @@ class ResearchRequest(BaseModel):
             taker_fee=self.taker_fee,
             slip_bp=self.slip_bp,
             intrabar=self.intrabar,
+            auto=self.auto,
+            auto_interval=self.auto_interval,
+            auto_atr_window=self.auto_atr_window,
+            auto_target_vol=self.auto_target_vol,
             liquidation_enabled=self.liquidation_enabled,
             liquidation_fee=self.liquidation_fee,
         )

@@ -277,6 +277,7 @@ cp apk/.env.example apk/.env
 - [17 TradingWorkstation 登录网关](docs/memory/17-TradingWorkstation登录网关-2026-11-18.md)
 - [18 Binance 式爆仓引擎](docs/memory/18-Binance式爆仓引擎-2026-11-18.md)
 - [19 Binance 全产品网关](docs/memory/19-Binance全产品网关-2026-11-18.md)
+- [20 自动调仓：ATR/波动率网格](docs/memory/20-自动调仓-ATR波动率网格.md)
 - [09 策略研究结论](docs/memory/09-策略研究结论.md)（**改策略前必读**）
 - [10 问题与决策记录](docs/memory/10-问题与决策记录.md)
 - [11 外部接口清单](docs/memory/11-外部接口清单.md)
@@ -290,7 +291,7 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 181 项
+.venv/bin/python -m pytest            # 182 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 

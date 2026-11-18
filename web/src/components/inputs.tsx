@@ -121,6 +121,26 @@ export function ParamsForm({
         </Field>
       </div>
 
+      {value.auto ? (
+        <div className="rounded-lg border border-line-soft bg-[#12151a] p-3">
+          <p className="mb-2 text-[10.5px] leading-relaxed text-muted">
+            自动模式：ATR 决定网格间距，波动率目标决定杠杆上限，库存超过半格先平仓再重锚。
+            间距/杠杆会随行情滚动调整，初始值仅作上限参考。
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="调参间隔" hint="K线根数">
+              <NumberInput value={value.auto_interval ?? 240} onChange={(next) => set('auto_interval', Math.round(next ?? 240))} min={10} suffix="根" />
+            </Field>
+            <Field label="ATR 窗口" hint="K线根数">
+              <NumberInput value={value.auto_atr_window ?? 120} onChange={(next) => set('auto_atr_window', Math.round(next ?? 120))} min={20} suffix="根" />
+            </Field>
+            <Field label="目标年化波动" hint="杠杆上限">
+              <NumberInput value={(value.auto_target_vol ?? 0.25) * 100} onChange={(next) => set('auto_target_vol', (next ?? 25) / 100)} min={1} max={500} suffix="%" />
+            </Field>
+          </div>
+        </div>
+      ) : null}
+
       {!compact ? (
         <div className="grid grid-cols-3 gap-3">
           <Field label="挂单费率" hint="限价成交">
@@ -148,11 +168,18 @@ export function ParamsForm({
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line-soft bg-[#12151a] px-3 py-2.5">
-        <Toggle
-          checked={value.intrabar}
-          onChange={(next) => set('intrabar', next)}
-          label="盘中撮合（乐观上界）"
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <Toggle
+            checked={value.intrabar}
+            onChange={(next) => set('intrabar', next)}
+            label="盘中撮合（乐观上界）"
+          />
+          <Toggle
+            checked={!!value.auto}
+            onChange={(next) => set('auto', next)}
+            label="自动调参（ATR/波动率）"
+          />
+        </div>
         <button
           type="button"
           onClick={() => onChange({ ...DEFAULT_PARAMS })}
