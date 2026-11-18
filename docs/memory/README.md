@@ -43,6 +43,7 @@
 | 13 | [13 历史归档](13-历史归档.md) | 提交时间线、两天开发流水、2026-11-17 对话决策、旧文档→新文档映射 | 复盘、追溯 |
 | 14 | [14 Google OAuth 与行情懒加载](14-Google-OAuth与行情懒加载-2026-11-18.md) | Device Flow 登录、后台白名单、行情页黑屏根因与懒加载、APK v0.3.0 | 配登录、改行情页的人 |
 | 15 | [15 HTTPS 域名与标准 Google OAuth](15-HTTPS与标准Google-OAuth-2026-11-18.md) | `jacklika.com` + Cloudflare Tunnel、账号选择页、Web/Admin/APK 深链 | 维护域名/隧道/登录的人 |
+| 16 | [16 移除 Gate 凭据与 Binance-only](16-移除Gate凭据与Binance-only-2026-11-18.md) | Gate Key 移除、实盘/Binance 页面、模拟盘切 Binance 节点 | 维护交易数据源的人 |
 | — | [vault/ 原始笔记索引](vault/README.md) | 19 篇 DSH 原始笔记的逐篇索引、主题聚类、冲突与缺口 | 想追溯第一手记录的人 |
 
 > 每篇文档头部都有 **用途 / 读者 / 最后核实 / 相关文档 / 可信度** 五元组。可信度：**A** = 已对照当前代码或本机实测；**B** = 历史笔记，未复核；**C** = 需设备/服务器才能复现。

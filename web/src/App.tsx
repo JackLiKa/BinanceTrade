@@ -9,7 +9,6 @@ import { Market } from './pages/Market'
 import { Strategy } from './pages/Strategy'
 import { Backtest } from './pages/Backtest'
 import { Paper } from './pages/Paper'
-import { Live } from './pages/Live'
 import { Binance } from './pages/Binance'
 import { Orders } from './pages/Orders'
 import { Positions } from './pages/Positions'
@@ -51,7 +50,7 @@ function Shell() {
     ) : route === 'paper' ? (
       <Paper />
     ) : route === 'live' ? (
-      <Live />
+      <Binance mode="execution" />
     ) : route === 'binance' ? (
       <Binance />
     ) : route === 'orders' ? (

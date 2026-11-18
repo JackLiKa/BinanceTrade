@@ -177,6 +177,50 @@ class Handler(BaseHTTPRequestHandler):
                         },
                     )
                     return
+                if route == "/market/contract":
+                    sym = (symbol or "BTCUSDT").upper()
+                    filt = client.symbol_filters(sym)
+                    premium = client.premium_index(sym)
+                    maker_bp = float(os.environ.get("BINANCE_MAKER_FEE_BP", "2") or 2)
+                    taker_bp = float(os.environ.get("BINANCE_TAKER_FEE_BP", "5") or 5)
+                    next_ms = int(premium.get("nextFundingTime") or 0)
+                    self._send(
+                        HTTPStatus.OK,
+                        {
+                            "ok": True,
+                            "symbol": sym,
+                            "order_price_round": filt["tick"] or 0.01,
+                            "quanto_multiplier": filt["step"] or 0.01,
+                            "order_size_min": filt["min_qty"] or filt["step"] or 0.01,
+                            "maker_fee_rate": maker_bp / 10_000.0,
+                            "taker_fee_rate": taker_bp / 10_000.0,
+                            "funding_next_apply": next_ms // 1000 if next_ms else 0,
+                            "funding_interval": 28_800,
+                            "exchange": "binance",
+                        },
+                    )
+                    return
+                if route == "/market/tickers":
+                    raw_symbols = (query.get("symbols") or [""])[0]
+                    wanted = [item.strip().upper() for item in raw_symbols.split(",") if item.strip()]
+                    if not wanted:
+                        wanted = [(symbol or "BTCUSDT").upper()]
+                    rows = []
+                    for sym in wanted:
+                        premium = client.premium_index(sym)
+                        ticker = client._request("GET", "/fapi/v1/ticker/24hr", {"symbol": sym}) or {}
+                        rows.append(
+                            {
+                                "contract": sym,
+                                "mark_price": float(premium.get("markPrice") or 0.0),
+                                "index_price": float(premium.get("indexPrice") or 0.0),
+                                "change_percentage": float(ticker.get("priceChangePercent") or 0.0),
+                                "funding_rate": float(premium.get("lastFundingRate") or 0.0),
+                                "next_funding_time": int(premium.get("nextFundingTime") or 0),
+                            }
+                        )
+                    self._send(HTTPStatus.OK, {"ok": True, "tickers": rows})
+                    return
                 if route == "/market/funding":
                     sym = (symbol or "BTCUSDT").upper()
                     limit = max(1, min(1000, int((query.get("limit") or ["300"])[0])))

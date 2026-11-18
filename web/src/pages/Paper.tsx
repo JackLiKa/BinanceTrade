@@ -138,12 +138,12 @@ export function Paper() {
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-[13px] font-semibold text-ink">实时组合模拟盘</h2>
               <Badge tone={STATUS[data.status].tone}>{STATUS[data.status].label}</Badge>
-              <Badge tone="info">{data.symbols.length} 标的 · Gate 永续</Badge>
+              <Badge tone="info">{data.symbols.length} 标的 · {data.source === 'binance' ? 'Binance 永续' : '永续'}</Badge>
               {data.config.enabled ? null : <Badge tone="warn">未在 .env 启用</Badge>}
             </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
               共享保证金组合：每个标的独立网格，合并计算权益、手续费与资金费。
-              费率优先取自 Gate 合约公开字段，缺失时才回退到配置值；每 {data.config.poll_seconds}s 轮询。
+              费率优先取自交易所合约公开字段，缺失时才回退到配置值；每 {data.config.poll_seconds}s 轮询。
             </p>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {data.symbols.map((symbol) => (

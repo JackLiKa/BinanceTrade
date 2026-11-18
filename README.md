@@ -4,7 +4,7 @@
 以及一套同时服务两种外壳的 React 单页应用——浏览器（桌面侧边栏）与 WebView APK
 （移动端底部导航）。
 
-面板以研究与模拟为主，另提供 **Gate 实盘账户只读分析**。实盘下单能力已经实现，但默认锁死
+面板以研究与模拟为主，另提供 **Binance 账户/执行节点只读分析**。实盘下单能力尚未开放，默认锁死
 （`GRIDTRADE_LIVE_TRADING=0`），需要显式配置凭据、确认风险并开启总开关后才会发送真实订单。
 
 英文文档见 [README.en.md](README.en.md)。
@@ -107,7 +107,7 @@ cp .env.example .env
 | --- | --- | --- |
 | `GRIDTRADE_PAPER_ENABLED` | `0` | 是否启用实时模拟盘 |
 | `GRIDTRADE_PAPER_AUTOSTART` | `0` | 服务启动后自动开始/恢复模拟盘 |
-| `GRIDTRADE_PAPER_SYMBOLS` | `SKHY_USDT,SPCX_USDT,GOOGL_USDT,AMGN_USDT` | Gate USDT 永续合约（逗号分隔） |
+| `GRIDTRADE_PAPER_SYMBOLS` | `SKHY_USDT,SPCX_USDT,GOOGL_USDT,AMGN_USDT` | Binance USDT 永续代码（下划线自动兼容成 `GOOGLUSDT`） |
 | `GRIDTRADE_PAPER_CAPITAL` | `10000` | 纸面本金（USDT） |
 | `GRIDTRADE_PAPER_LEVERAGE` | `2` | 总名义 / 本金 |
 | `GRIDTRADE_PAPER_SPACING_BP` | `60` | 网格间距（bp） |
@@ -117,18 +117,16 @@ cp .env.example .env
 | `GRIDTRADE_PAPER_TAKER_FEE_BP` | `5` | 吃单费率 |
 | `GRIDTRADE_PAPER_POLL_SECONDS` | `3` | 行情轮询间隔 |
 
-实盘（Gate USDT 永续）变量，可在页面配置并写回服务器 `.env`：
+实盘/账户变量（2026-11-18 起 Gate Key 已全部移除，使用 Binance 东京执行节点）：
 
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
-| `GRIDTRADE_LIVE_ENABLED` | `0` | 是否启用实盘账户同步/分析 |
-| `GRIDTRADE_LIVE_TRADING` | `0` | **下单总开关**，默认关闭；开启后仍受风控上限约束 |
-| `GATE_API_KEY` / `GATE_API_SECRET` | 空 | Gate API 凭据（只读 Key 只能分析） |
-| `GRIDTRADE_LIVE_MAX_NOTIONAL` | `5000` | 总名义上限（USDT） |
-| `GRIDTRADE_LIVE_MAX_ORDER_NOTIONAL` | `1000` | 单笔上限 |
-| `GRIDTRADE_LIVE_MAX_POSITION_NOTIONAL` | `3000` | 单标的上限 |
-| `GRIDTRADE_LIVE_MAX_OPEN_ORDERS` | `20` | 最大挂单数 |
+| `GRIDTRADE_BINANCE_NODE_URL` | 空 | 东京执行节点 `http://10.66.0.2:8100`；`#/live`、`#/binance` 数据来源 |
+| `GRIDTRADE_PAPER_SOURCE` | `binance` | 模拟盘公开行情：`binance`（经节点）或 `gate`（旧兼容） |
+| `GRIDTRADE_PAPER_SYMBOLS` | 四个标的 | Binance 合约代码（下划线兼容） |
 | `GRIDTRADE_ENV_FILE` | 自动 | 指定 `.env` 路径（工作目录不是部署根时使用） |
+
+> Gate API Key/Secret 已从服务器 `.env` 和后台移除；Gate 私有实盘代码仅作历史保留，不再启用。
 
 在 localhost 之外暴露面板：
 
@@ -145,7 +143,7 @@ cp .env.example .env
 | `#/strategy` | 网格参数、参数校验、价格区间/敞口/止损风险的实时预览 |
 | `#/backtest` | 回放 / 前向滚动 / 参数扫描、月度归因、订单流、权益与回撤 |
 | `#/paper` | 实时组合模拟盘：多标的共享保证金、网格纸面成交、手续费/资金费、组合权益与持仓 |
-| `#/live` | 实盘账户（Gate）：余额/持仓/挂单/成交/流水与实盘分析；下单默认锁定 |
+| `#/live` | 实盘账户（Binance）：余额/持仓/挂单/**交割单**、历史订单；只读 |
 | `#/binance` | Binance 东京执行节点（只读）：健康/账户/持仓/挂单/成交/告警 |
 | `#/orders` | 任务选择、订单/成交表、拒单原因、期末挂单 |
 | `#/positions` | 模拟持仓、网格状态、分层库存 |
@@ -253,7 +251,7 @@ cp apk/.env.example apk/.env
 独立后台地址：**https://gt.jacklika.com/admin**（优先 Google 登录，管理员密码备用）。
 
 - 默认账号/密码：`admin / admin`（首次登录后请立即在“安全”里修改）；Google 账号需标记“后台”才能进。
-- 功能：概览（模拟盘/实盘状态）、Gate 实盘凭据与风控上限、模拟盘标的与参数、启动/停止/重置、轮换面板令牌、修改密码、审计日志。
+- 功能：概览、模拟盘标的与参数、Google 登录、安全、审计日志；**Gate Key 配置已移除**。
 - **Google 登录**：配置 OAuth Client ID/Secret、启停、维护允许登录的 Google 邮箱；数据存 `var/auth.db`。
 - **后台 Google 登录**：登录页同样支持 Google OAuth（带官方 G 图标）；账号需在 Google 页被标记为“后台”才可进入，管理员密码保留为备用。
 - **菜单式布局**：左侧切换概览 / 实盘配置 / 模拟盘 / Google 登录 / 安全 / 审计日志；移动端为顶部横向菜单。
@@ -275,6 +273,7 @@ cp apk/.env.example apk/.env
 - [08 测试与验收](docs/memory/08-测试与验收.md)（桌面 Web 与真机 APK 的可复现步骤）
 - [14 Google OAuth 与行情懒加载](docs/memory/14-Google-OAuth与行情懒加载-2026-11-18.md)
 - [15 HTTPS 域名与标准 Google OAuth](docs/memory/15-HTTPS与标准Google-OAuth-2026-11-18.md)
+- [16 移除 Gate 凭据与 Binance-only](docs/memory/16-移除Gate凭据与Binance-only-2026-11-18.md)
 - [09 策略研究结论](docs/memory/09-策略研究结论.md)（**改策略前必读**）
 - [10 问题与决策记录](docs/memory/10-问题与决策记录.md)
 - [11 外部接口清单](docs/memory/11-外部接口清单.md)
@@ -294,16 +293,12 @@ cd web && pnpm typecheck              # tsc --noEmit
 
 ## 有意为之的边界
 
-- **实盘下单默认锁定。** `MODES` 启用 `research`、`paper` 与 `live`（Gate 只读分析）；
-  下单总开关默认 0，此时下单/撤单/平仓/杠杆一律被拒：**未启用实盘或未配置 Key 返回 409**，
-  **已启用但未解锁返回 403**（`POST /api/live/config` 不受此锁约束）。API 凭据只写入服务器 `.env`，
-  页面只显示 Key 后四位，Secret 不回传。
-- 实时组合模拟盘使用 Gate.io USDT 永续公开行情与资金费率（服务器可访问），默认
-  `SKHY_USDT / SPCX_USDT / GOOGL_USDT / AMGN_USDT`，共享一个保证金池，成交、手续费
-  （取自合约 `maker_fee_rate/taker_fee_rate`）、资金费与组合权益写入 `var/paper.db`。
-- 实盘接入 Gate 私有只读接口做账户分析；下单代码完整但默认锁定（`GRIDTRADE_LIVE_TRADING=0`），
-  未配置 Key 时不会发起任何私有写请求。所有外部接口见
-  [外部接口清单](docs/memory/11-外部接口清单.md)。
+- **实盘只读。** `#/live` 和 `#/binance` 都读取东京 Binance 执行节点；面板没有写接口，真实下单
+  仍需在节点上人工执行并满足三重锁。Gate API Key/Secret 已移除。
+- 实时组合模拟盘使用 **Binance USDT 永续公开行情与资金费率**（经东京节点，无需 API Key），
+  默认 `SKHY_USDT / SPCX_USDT / GOOGL_USDT / AMGN_USDT`，共享保证金池；成交、手续费、
+  资金费与组合权益写入 `var/paper.db`。
+- 所有外部接口见 [外部接口清单](docs/memory/11-外部接口清单.md)。
 - 单用户、单进程。写入通过锁串行化；SQLite 使用 WAL 模式与短连接。
 - 行情快照走币安公共 REST，失败时降级为 `source: "offline"`，而不是阻塞界面。
 - 模拟成交使用分钟 K 线的最高/最低价；资金费率按记录的资金事件扣缴，

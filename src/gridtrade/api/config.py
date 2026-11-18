@@ -122,6 +122,7 @@ class PaperConfig:
     enabled: bool = False
     autostart: bool = False
     source: str = "gate"
+    node_url: str = ""
     symbols: list[str] = field(
         default_factory=lambda: ["SKHY_USDT", "SPCX_USDT", "GOOGL_USDT", "AMGN_USDT"]
     )
@@ -142,6 +143,7 @@ class PaperConfig:
             enabled=_env_bool("GRIDTRADE_PAPER_ENABLED", True),
             autostart=_env_bool("GRIDTRADE_PAPER_AUTOSTART", True),
             source=os.environ.get("GRIDTRADE_PAPER_SOURCE", "gate").strip().lower(),
+            node_url=os.environ.get("GRIDTRADE_BINANCE_NODE_URL", "").strip().rstrip("/"),
             symbols=_symbols(),
             capital=_as_float("GRIDTRADE_PAPER_CAPITAL", 10_000.0),
             leverage=_as_float("GRIDTRADE_PAPER_LEVERAGE", 2.0),

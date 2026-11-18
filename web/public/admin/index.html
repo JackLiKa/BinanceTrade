@@ -131,7 +131,6 @@
         <div class="admin-layout">
           <aside class="menu" id="adminMenu">
             <button type="button" data-section="overview" class="active">概览</button>
-            <button type="button" data-section="live">实盘配置</button>
             <button type="button" data-section="paper">模拟盘</button>
             <button type="button" data-section="google">Google 登录</button>
             <button type="button" data-section="security">安全</button>
@@ -145,32 +144,10 @@
           <div class="grid" id="overviewStats"></div>
         </div>
 
-        <div class="card section" data-section="live">
-          <h2>实盘配置（Gate）</h2>
-          <p class="hint">写入服务器 .env，只回显 Key 后四位；下单默认锁定。</p>
-          <div class="row">
-            <label><span>API Key（留空不改）</span><input id="apiKey" type="text" autocomplete="off" /></label>
-            <label><span>API Secret（留空不改）</span><input id="apiSecret" type="password" autocomplete="new-password" /></label>
-          </div>
-          <div class="row">
-            <label><span>总名义上限 USDT</span><input id="maxNotional" type="number" step="100" /></label>
-            <label><span>单笔上限 USDT</span><input id="maxOrderNotional" type="number" step="100" /></label>
-            <label><span>单标的上限 USDT</span><input id="maxPositionNotional" type="number" step="100" /></label>
-            <label><span>最大挂单数</span><input id="maxOpenOrders" type="number" step="1" /></label>
-          </div>
-          <div class="switch" style="margin:6px 0 12px"><input id="liveEnabled" type="checkbox" /><label for="liveEnabled" style="margin:0">启用实盘账户同步</label></div>
-          <div class="switch" style="margin:6px 0 12px"><input id="tradingEnabled" type="checkbox" /><label for="tradingEnabled" style="margin:0">允许实盘下单（需勾选确认）</label></div>
-          <div class="switch" style="margin:6px 0 12px"><input id="confirmTrading" type="checkbox" /><label for="confirmTrading" style="margin:0">我确认开启后会发送真实订单</label></div>
-          <div class="actions">
-            <button class="primary" id="saveLiveBtn">保存实盘配置</button>
-            <button class="danger" id="clearLiveBtn">清除凭据</button>
-          </div>
-        </div>
-
         <div class="card section" data-section="paper">
           <h2>模拟盘配置</h2>
           <p class="hint">保存后会重置模拟盘账户（清空成交/权益并从当前标记价重新锚定）。</p>
-          <label><span>标的（Gate 合约名，逗号分隔）</span><input id="paperSymbols" type="text" /></label>
+          <label><span>标的（合约名，逗号分隔）</span><input id="paperSymbols" type="text" /></label>
           <div class="row">
             <label><span>本金 USDT</span><input id="paperCapital" type="number" step="100" /></label>
             <label><span>杠杆</span><input id="paperLeverage" type="number" step="0.1" /></label>
@@ -363,18 +340,8 @@
           ['模拟盘状态', data.paper.status || '—'],
           ['模拟盘权益', '$' + Number(data.paper.equity || 0).toFixed(2)],
           ['标的数', (data.paper.symbols || []).length],
-          ['实盘同步', data.live.enabled ? '已启用' : '未启用'],
-          ['实盘凭据', data.live.configured ? '已配置 ' + data.live.api_key_hint : '未配置'],
-          ['实盘下单', data.live.trading_enabled ? '已解锁' : '锁定'],
         ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
 
-        const live = data.live;
-        $('liveEnabled').checked = !!live.enabled;
-        $('tradingEnabled').checked = !!live.trading_enabled;
-        $('maxNotional').value = live.max_notional;
-        $('maxOrderNotional').value = live.max_order_notional;
-        $('maxPositionNotional').value = live.max_position_notional;
-        $('maxOpenOrders').value = live.max_open_orders;
         const paper = data.paper.config || {};
         $('paperSymbols').value = (data.paper.symbols || []).join(', ');
         $('paperCapital').value = paper.capital ?? '';
@@ -397,7 +364,7 @@
         }
       };
 
-      const SECTIONS = ['overview', 'live', 'paper', 'google', 'security', 'audit'];
+      const SECTIONS = ['overview', 'paper', 'google', 'security', 'audit'];
 
       const showSection = (name) => {
         const target = SECTIONS.includes(name) ? name : 'overview';
@@ -505,26 +472,6 @@
         } catch (err) { toast(err.message, 'err'); }
       };
 
-      const saveLive = async () => {
-        const payload = {
-          enabled: $('liveEnabled').checked,
-          trading_enabled: $('tradingEnabled').checked,
-          confirm_trading: $('confirmTrading').checked,
-          max_notional: Number($('maxNotional').value),
-          max_order_notional: Number($('maxOrderNotional').value),
-          max_position_notional: Number($('maxPositionNotional').value),
-          max_open_orders: Number($('maxOpenOrders').value),
-        };
-        if ($('apiKey').value.trim()) payload.api_key = $('apiKey').value.trim();
-        if ($('apiSecret').value.trim()) payload.api_secret = $('apiSecret').value.trim();
-        try {
-          await api('/api/admin/live', { method: 'POST', body: JSON.stringify(payload) });
-          $('apiKey').value = ''; $('apiSecret').value = ''; $('confirmTrading').checked = false;
-          toast('实盘配置已保存到 .env');
-          await loadOverview();
-        } catch (err) { toast(err.message, 'err'); }
-      };
-
       const savePaper = async () => {
         const payload = {
           symbols: $('paperSymbols').value.split(',').map((s) => s.trim()).filter(Boolean),
@@ -578,16 +525,8 @@
       $('password').onkeydown = (event) => { if (event.key === 'Enter') login(); };
       $('logoutBtn').onclick = async () => { try { await api('/api/admin/logout', { method: 'POST' }); } catch (_) {} showLogin(); };
       $('refreshBtn').onclick = loadOverview;
-      $('saveLiveBtn').onclick = saveLive;
       $('saveGoogleBtn').onclick = saveGoogleConfig;
       $('addGoogleUserBtn').onclick = addGoogleUser;
-      $('clearLiveBtn').onclick = async () => {
-        if (!window.confirm('清除服务器 .env 中的 Gate 凭据？')) return;
-        try {
-          await api('/api/admin/live', { method: 'POST', body: JSON.stringify({ clear_credentials: true, enabled: false, trading_enabled: false }) });
-          toast('凭据已清除'); await loadOverview();
-        } catch (err) { toast(err.message, 'err'); }
-      };
       $('savePaperBtn').onclick = savePaper;
       $('paperStartBtn').onclick = () => paperAction('start');
       $('paperStopBtn').onclick = () => paperAction('stop');

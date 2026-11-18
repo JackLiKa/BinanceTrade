@@ -23,7 +23,7 @@ function stamp(ms: number | undefined): string {
   return new Date(ms).toLocaleString('zh-CN', { hour12: false })
 }
 
-export function Binance() {
+export function Binance({ mode = 'account' }: { mode?: 'account' | 'execution' }) {
   const [symbol] = useState<string | undefined>(undefined)
   const state = useFetch(() => api.binanceState(symbol), [symbol], { pollMs: 15000 })
   const data = state.data
@@ -43,7 +43,9 @@ export function Binance() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-[15px] font-semibold tracking-[0.01em] text-ink">Binance 执行节点</h1>
+          <h1 className="text-[15px] font-semibold tracking-[0.01em] text-ink">
+            {mode === 'execution' ? '实盘 · Binance 只读' : 'Binance 执行节点'}
+          </h1>
           <p className="mt-1 text-[11.5px] text-faint">
             东京节点 · 只读视图 · 经 WireGuard 隧道访问
             {data?.node_url ? ` · ${data.node_url}` : ''}
@@ -363,6 +365,7 @@ export function Binance() {
         )}
       </Card>
 
+      {mode === 'account' ? (
       <Card>
         <CardHead
           title="对账与监控"
@@ -402,7 +405,9 @@ export function Binance() {
           </div>
         )}
       </Card>
+      ) : null}
 
+      {mode === 'account' ? (
       <Card>
         <CardHead
           title="成本模型（计划值）"
@@ -450,6 +455,7 @@ export function Binance() {
           <p className="text-[12px] text-faint">节点未返回成本模型（升级适配器后可见）。</p>
         )}
       </Card>
+      ) : null}
 
       <p className="text-[11px] leading-relaxed text-faint">
         说明：本页只读，所有下单/撤单仍需在东京节点上人工操作（`BINANCE_TRADING=0` 且 KILL 文件在位时，

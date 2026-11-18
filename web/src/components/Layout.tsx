@@ -405,7 +405,7 @@ export function Layout({ children }: { children: ReactNode }) {
             <LogOut size={13} /> 退出登录
           </Button>
           <p className="px-1 font-mono text-[9.5px] leading-relaxed text-faint">
-            回测 · 模拟盘 · Gate 只读 · Binance 执行节点（只读）
+            回测 · 模拟盘 · Binance 执行节点（只读）
           </p>
         </div>
       </aside>

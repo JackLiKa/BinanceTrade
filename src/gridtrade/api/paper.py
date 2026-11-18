@@ -223,6 +223,61 @@ class GateFeed:
         self._client.close()
 
 
+class NodeFeed:
+    """Public Binance USDⓈ-M market data via the Tokyo execution node.
+
+    Used when ``GRIDTRADE_PAPER_SOURCE=binance``; no Binance API keys are needed
+    because the adapter only reads public market endpoints.
+    """
+
+    def __init__(self, base_url: str) -> None:
+        self._client = httpx.Client(
+            base_url=base_url.rstrip("/"),
+            timeout=httpx.Timeout(10.0, connect=4.0),
+            headers={"User-Agent": "gridtrade/0.1 paper-node"},
+        )
+
+    @staticmethod
+    def _binance(symbol: str) -> str:
+        return symbol.strip().upper().replace("_", "")
+
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        response = self._client.get(path, params=params)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            raise RuntimeError(f"node market error: {payload}")
+        return payload
+
+    def contract(self, symbol: str) -> dict[str, Any]:
+        return self._get("/market/contract", {"symbol": self._binance(symbol)})
+
+    def tickers(self, symbols: list[str]) -> list[dict[str, Any]]:
+        originals = {self._binance(symbol): symbol for symbol in symbols}
+        payload = self._get(
+            "/market/tickers", {"symbols": ",".join(originals.keys())}
+        )
+        rows = []
+        for row in payload.get("tickers") or []:
+            item = dict(row)
+            item["contract"] = originals.get(str(row.get("contract") or "").upper(), row.get("contract"))
+            rows.append(item)
+        return rows
+
+    def funding(self, symbol: str, limit: int = 10) -> list[dict[str, Any]]:
+        payload = self._get(
+            "/market/funding", {"symbol": self._binance(symbol), "limit": limit}
+        )
+        rows = []
+        for row in payload.get("funding") or []:
+            if isinstance(row, (list, tuple)) and len(row) >= 2:
+                rows.append({"t": int(row[0]), "r": float(row[1])})
+        return rows
+
+    def close(self) -> None:
+        self._client.close()
+
+
 @dataclass(slots=True)
 class SymbolState:
     symbol: str
@@ -303,7 +358,10 @@ class PaperEngine:
 
     def feed(self) -> Feed:
         if self._feed is None:
-            self._feed = GateFeed()
+            if self.config.source == "binance" and self.config.node_url:
+                self._feed = NodeFeed(self.config.node_url)
+            else:
+                self._feed = GateFeed()
         return self._feed
 
     def autostart(self) -> None:
@@ -377,8 +435,9 @@ class PaperEngine:
         with self._lock:
             self._save()
         feed = self._feed
-        if isinstance(feed, GateFeed):
-            feed.close()
+        close = getattr(feed, "close", None)
+        if callable(close):
+            close()
 
     def reset(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         self._archive_run("reset")
@@ -866,6 +925,8 @@ class PaperEngine:
                 conn.execute("DELETE FROM paper_symbols")
 
     def _load(self) -> None:
+        initial_source = self.config.source
+        initial_node_url = self.config.node_url
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM paper_account WHERE id = 1").fetchone()
             symbol_rows = conn.execute("SELECT * FROM paper_symbols").fetchall()
@@ -879,6 +940,11 @@ class PaperEngine:
             self.config = replace(self.config, **allowed)
         except (ValueError, TypeError):
             pass
+        # Data source is deployment configuration, not run state: keep the
+        # current env choice even when the database was written by GateFeed.
+        self.config = replace(
+            self.config, source=initial_source, node_url=initial_node_url
+        )
         self.account = PortfolioAccount(
             cash=row["cash"],
             realized=row["realized"],
@@ -1049,7 +1115,7 @@ class PaperEngine:
                 "enabled": self.config.enabled,
                 "status": self.status,
                 "symbols": list(self.state),
-                "source": "gate",
+                "source": self.config.source,
                 "last_tick_at": self.last_tick_at,
                 "last_error": self.last_error,
                 "config": asdict(self.config),
