@@ -35,7 +35,8 @@
   - `GET /__tw_auth/logout`
 - Google 回调按 `purpose="tw"` 分支（新回调路径 `/__tw_auth/google/callback`）：
   - 邮箱不在白名单 → 回 tw 登录页报错
-  - 没有密码 → 生成 15 分钟 pending token → `/__tw_auth/set-password`
+  - 没有密码 → 生成 60 分钟 pending token → `/__tw_auth/set-password`
+  - 已有密码 → 直接建 session，不再显示创建密码页；旧/失效 token 访问创建页会跳登录
   - 已有密码 → 生成一次性 code → `/__tw_auth/google/return` → 设置 tw_session
 
 ### 2.2 nginx
@@ -76,4 +77,5 @@
 
 - “grafana”若指真实的 Grafana 服务（3000 端口），本次没有改 Grafana 自身登录；需要单独配置 Google OAuth/白名单，或让 Grafana 走同一套反代鉴权。
 - 首次 Gmail 登录需 Google OAuth 同意屏幕允许这些账号；测试模式加 Test users。
+- **不要把测试清理逻辑指向真实 `var/tw_auth.db`**。2026-11-18 曾因测试后执行 `DELETE FROM tw_users` 把真实密码清空，导致再次 Google 登录又提示创建密码；后续测试只用临时 DB/专用账号。
 - 登录页和认证服务均只走 HTTPS；不允许 HTTP。

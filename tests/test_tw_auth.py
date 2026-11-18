@@ -41,6 +41,15 @@ def test_pending_and_one_time_codes(tmp_path: Path) -> None:
     assert store.consume_code(code) is None
 
 
+def test_pending_peek_is_non_destructive(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    token = store.create_pending("040418jie@gmail.com", "/TradingWorkstation")
+    assert store.peek_pending(token) == ("040418jie@gmail.com", "/TradingWorkstation")
+    assert store.peek_pending(token) == ("040418jie@gmail.com", "/TradingWorkstation")
+    assert store.consume_pending(token) is not None
+    assert store.peek_pending(token) is None
+
+
 def test_safe_next_rejects_absolute_and_protocol_relative() -> None:
     assert safe_next("/TradingWorkstation") == "/TradingWorkstation"
     assert safe_next("https://evil.example") == "/TradingWorkstation"

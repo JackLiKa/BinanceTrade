@@ -149,7 +149,7 @@ class TwAuthStore:
             conn.execute("DELETE FROM tw_sessions WHERE token = ?", (token,))
             conn.commit()
 
-    def create_pending(self, email: str, next_path: str, ttl: int = 900) -> str:
+    def create_pending(self, email: str, next_path: str, ttl: int = 3600) -> str:
         token = secrets.token_urlsafe(24)
         with self._connect() as conn:
             conn.execute("DELETE FROM tw_pending WHERE expires_at < ?", (time.time(),))
@@ -159,6 +159,15 @@ class TwAuthStore:
             )
             conn.commit()
         return token
+
+    def peek_pending(self, token: str) -> tuple[str, str] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT email, next_path, expires_at FROM tw_pending WHERE token = ?", (token,)
+            ).fetchone()
+        if row is None or float(row["expires_at"]) < time.time():
+            return None
+        return str(row["email"]), str(row["next_path"])
 
     def consume_pending(self, token: str) -> tuple[str, str] | None:
         with self._connect() as conn:
@@ -245,6 +254,7 @@ button{{width:100%;height:40px;margin-top:16px;border:0;border-radius:8px;backgr
 <label>新密码（至少 8 位）</label><input name="password" type="password" minlength="8" required>
 <label>确认密码</label><input name="password2" type="password" minlength="8" required>
 <button type="submit">创建密码并登录</button>
+<p style="text-align:center;margin:12px 0 0"><a href="/__tw_auth/login" style="color:#fcd535;text-decoration:none">已有密码？直接登录</a></p>
 </form></body></html>"""
 
 

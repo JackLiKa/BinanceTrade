@@ -624,10 +624,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return redirect
 
     @app.get("/__tw_auth/set-password", response_class=HTMLResponse, include_in_schema=False)
-    async def tw_set_password_page(token: str = "", next: str = "/TradingWorkstation", error: str = "") -> HTMLResponse:
-        if not token:
-            return HTMLResponse(login_page(next_path=next, error="缺少设置密码凭证，请重新 Gmail 登录"))
-        return HTMLResponse(set_password_page(token=token, next_path=next, error=error))
+    async def tw_set_password_page(token: str = "", next: str = "/TradingWorkstation", error: str = "") -> Response:
+        pair = tw_store.peek_pending(token) if token else None
+        if pair is None:
+            return RedirectResponse(
+                "/__tw_auth/login?error=" + urlencode({"": "设置密码链接已失效，请重新 Gmail 登录"})[1:],
+                status_code=302,
+            )
+        email, target = pair
+        if tw_store.has_password(email):
+            return RedirectResponse(
+                "/__tw_auth/login?error=" + urlencode({"": "该账号已有密码，请直接登录"})[1:],
+                status_code=302,
+            )
+        return HTMLResponse(set_password_page(token=token, next_path=target or next, error=error))
 
     @app.post("/__tw_auth/set-password", include_in_schema=False)
     async def tw_set_password(request: Request, response: Response) -> RedirectResponse:
@@ -642,7 +652,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if len(password) < 8:
             pending = tw_store.create_pending(email, target)
             return RedirectResponse(
-                f"/__tw_auth/set-password?token={quote(token)}&next={quote(target)}&error=" + urlencode({"": "密码至少 8 位"})[1:],
+                f"/__tw_auth/set-password?token={quote(pending)}&next={quote(target)}&error=" + urlencode({"": "密码至少 8 位"})[1:],
                 status_code=302,
             )
         if password != password2:
