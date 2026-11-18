@@ -62,6 +62,9 @@ React 卸载整棵树，页面变黑。和“一次拉的数据太多”关系�
 - `scripts/tokyo_google_relay.py`：只转发 3 个固定 Google 端点（`/device/code`、`/token`、`/userinfo`），
   监听 WireGuard `10.66.0.2:8101`，不是通用代理。
 - 面板配置 `GRIDTRADE_GOOGLE_RELAY` 指向它；未配置时仍会尝试直连 Google（仅本地/可直连环境可用）。
+- **已部署（2026-11-18）**：东京节点 `gridtrade-google-relay.service`（enabled/active），监听 `10.66.0.2:8101`；
+  广州 `.env` 已改为 `GRIDTRADE_GOOGLE_RELAY=http://10.66.0.2:8101` + token（0600，不入库）。
+  实测面板 `POST /api/auth/google/start` 返回真实 Google `user_code`（HTTP 200）。
 
 东京节点部署（Lightsail 浏览器 SSH / 你的 SSH）：
 ```bash
@@ -118,9 +121,9 @@ GRIDTRADE_GOOGLE_RELAY_TOKEN=请替换为随机串
 - 生产 Google 登录需完成 §2.4 中继 + §2.5 Client 凭据后才能验收。
 
 ## 4. 待办 / 风险
-- [ ] 部署东京 Google relay（需要东京节点 SSH 或你在 Lightsail 浏览器 SSH 执行）。
-- [ ] 创建 Google OAuth Client（TV devices）并填入 `/admin`。
-- [ ] 添加允许登录的 Google 邮箱；Testing 模式记得加 Test users。
+- [x] 部署东京 Google relay：已完成（systemd 开机自启，WireGuard 内网可达）。
+- [x] 创建 Google OAuth Client（TV devices）并填入 `/admin`：已完成（凭据在服务器 `var/auth.db`）。
+- [ ] 添加允许登录的 Google 邮箱；Testing 模式记得加 Test users（当前 `users=0`）。
 - [x] 真机复测 `#/market`：已通过（2026-11-18 10:40，APK v0.3.0）。
 - [ ] 上 HTTPS 后可改为标准 redirect 登录，Device Flow 保留备用。
 - [ ] `var/auth.db` 纳入备份；删除它等于清空 Google 白名单/会话（不会动面板令牌）。
