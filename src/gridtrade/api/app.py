@@ -30,7 +30,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..research.runner import ResearchParams
@@ -40,7 +40,13 @@ from .binance_node import BinanceNodeClient, BinanceNodeError
 from .jobs import JobQueue
 from .live import LiveMarket
 from .admin import ADMIN_COOKIE, SESSION_TTL, AdminError, AdminService, AdminAuth
-from .google_auth import GoogleAuthError, GoogleAuthStore, GoogleDeviceFlow
+from .google_auth import (
+    GoogleAuthError,
+    GoogleAuthStore,
+    GoogleDeviceFlow,
+    GoogleWebError,
+    GoogleWebOAuth,
+)
 from .live_gate import LiveError, LiveService, write_env_file
 from .paper import PaperEngine
 from .service import INTERVALS, ResearchService
@@ -167,11 +173,18 @@ class GooglePollRequest(BaseModel):
     flow_id: str = Field(min_length=8, max_length=128)
 
 
+class GoogleExchangeRequest(BaseModel):
+    code: str = Field(min_length=8, max_length=128)
+
+
 class AdminGoogleConfig(BaseModel):
     client_id: str | None = None
     client_secret: str | None = None
     enabled: bool | None = None
     clear_secret: bool = False
+    web_client_id: str | None = None
+    web_client_secret: str | None = None
+    clear_web_secret: bool = False
 
 
 class AdminGoogleUser(BaseModel):
@@ -288,6 +301,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     admin_service = AdminService(settings, store, live_service, paper)
     google_store = GoogleAuthStore(settings.var_dir / "auth.db")
     google_flow = GoogleDeviceFlow(
+        google_store,
+        relay_url=settings.google_relay_url,
+        relay_token=settings.google_relay_token,
+    )
+    google_web = GoogleWebOAuth(
         google_store,
         relay_url=settings.google_relay_url,
         relay_token=settings.google_relay_token,
@@ -426,6 +444,115 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path="/",
         )
 
+    def public_base(request: Request) -> str:
+        if settings.public_url:
+            return settings.public_url
+        proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+        host = request.headers.get("x-forwarded-host", request.headers.get("host", "")).split(",")[0].strip()
+        return f"{proto}://{host}" if host else ""
+
+    def web_redirect_uri(request: Request) -> str:
+        return f"{public_base(request)}/api/auth/google/callback"
+
+    def oauth_error_redirect(request: Request, purpose: str, message: str) -> RedirectResponse:
+        target = "/admin" if purpose == "admin" else "/"
+        return RedirectResponse(f"{target}?oauth_error={message[:180]}", status_code=302)
+
+    @app.get("/api/auth/google/web/start", tags=["auth"])
+    async def google_web_start(
+        request: Request,
+        next: str = Query("/", max_length=300),
+        app: int = Query(0, ge=0, le=1),
+    ) -> RedirectResponse:
+        try:
+            url = await asyncio.to_thread(
+                google_web.start,
+                redirect_uri=web_redirect_uri(request),
+                purpose="panel",
+                next_path=next,
+                app=bool(app),
+            )
+        except GoogleWebError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        return RedirectResponse(url, status_code=302)
+
+    @app.get("/api/admin/google/web/start", tags=["admin"])
+    async def admin_google_web_start(request: Request, next: str = Query("/admin", max_length=300)) -> RedirectResponse:
+        try:
+            url = await asyncio.to_thread(
+                google_web.start,
+                redirect_uri=web_redirect_uri(request),
+                purpose="admin",
+                next_path=next,
+            )
+        except GoogleWebError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        return RedirectResponse(url, status_code=302)
+
+    @app.get("/api/auth/google/callback", tags=["auth"])
+    async def google_web_callback(request: Request, code: str = Query(""), state: str = Query("")) -> RedirectResponse:
+        if not code or not state:
+            return oauth_error_redirect(request, "panel", "missing code/state")
+        try:
+            result = await asyncio.to_thread(google_web.exchange, code, state)
+        except GoogleWebError as exc:
+            return oauth_error_redirect(request, "panel", exc.message)
+        email = result["email"]
+        purpose = result["purpose"]
+        target = result.get("next") or ("/admin" if purpose == "admin" else "/")
+        if purpose == "admin":
+            if not google_store.is_admin(email):
+                return oauth_error_redirect(request, "admin", f"{email} 未被授予后台权限")
+            admin_token = admin_service.auth.grant(email)
+            response = RedirectResponse(target, status_code=302)
+            response.set_cookie(
+                ADMIN_COOKIE,
+                admin_token,
+                max_age=SESSION_TTL,
+                httponly=True,
+                samesite="strict",
+                secure=settings.secure_cookie,
+                path="/",
+            )
+            store.audit("admin.google_login", email, actor="google-web")
+            return response
+        if not google_store.is_allowed(email):
+            return oauth_error_redirect(request, "panel", f"{email} 不在允许名单中")
+        if result.get("app"):
+            code = google_store.create_code(email)
+            return RedirectResponse(f"gridtrade://oauth?code={code}", status_code=302)
+        panel_token = google_store.create_session(email)
+        response = RedirectResponse(target, status_code=302)
+        response.set_cookie(
+            COOKIE_NAME,
+            panel_token,
+            max_age=COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+            secure=settings.secure_cookie,
+            path="/",
+        )
+        store.audit("auth.google_login", email, actor="google-web")
+        return response
+
+    @app.post("/api/auth/google/exchange", tags=["auth"])
+    async def google_exchange(payload: GoogleExchangeRequest, response: Response) -> dict[str, Any]:
+        email = await asyncio.to_thread(google_store.consume_code, payload.code)
+        if not email:
+            raise HTTPException(status_code=400, detail="登录码无效或已过期")
+        token = google_store.create_session(email)
+        response.set_cookie(
+            COOKIE_NAME,
+            token,
+            max_age=COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+            secure=settings.secure_cookie,
+            path="/",
+        )
+        store.audit("auth.google_login", email, actor="google-app")
+        return {"ok": True, "email": email}
+
     @app.get("/api/auth/providers", tags=["auth"])
     async def auth_providers() -> dict[str, Any]:
         config = google_store.config()
@@ -436,6 +563,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "device_flow": True,
                 "users": len(google_store.list_users()),
                 "admin_users": len([user for user in google_store.list_users() if user.get("is_admin")]),
+                "web_enabled": bool(google_store.web_config()[0] and google_store.web_config()[1]),
             }
         }
 
@@ -1063,15 +1191,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.get("/api/admin/google", dependencies=admin_guarded)
-    async def admin_google() -> dict[str, Any]:
+    async def admin_google(request: Request) -> dict[str, Any]:
         config = google_store.config()
         return {
             "enabled": config.enabled,
             "configured": config.configured,
             "client_id": config.client_id,
             "secret_hint": ("…" + config.client_secret[-4:]) if config.client_secret else "",
+            "web_client_id": google_store.web_config()[0],
+            "web_secret_hint": ("…" + google_store.web_config()[1][-4:]) if google_store.web_config()[1] else "",
+            "redirect_uri": f"{public_base(request)}/api/auth/google/callback",
             "users": await asyncio.to_thread(google_store.list_users),
             "device_flow": True,
+            "web_enabled": bool(google_store.web_config()[0] and google_store.web_config()[1]),
         }
 
     @app.post("/api/admin/google/config", dependencies=admin_guarded)
@@ -1083,12 +1215,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             enabled=payload.enabled,
             clear_secret=payload.clear_secret,
         )
+        if payload.web_client_id is not None or payload.web_client_secret is not None or payload.clear_web_secret:
+            await asyncio.to_thread(
+                google_store.set_web_config,
+                client_id=payload.web_client_id,
+                client_secret=payload.web_client_secret,
+                clear_secret=payload.clear_web_secret,
+            )
         store.audit("admin.google_config", "updated", actor="admin")
         return {
             "enabled": config.enabled,
             "configured": config.configured,
             "client_id": config.client_id,
             "secret_hint": ("…" + config.client_secret[-4:]) if config.client_secret else "",
+            "web_client_id": google_store.web_config()[0],
+            "web_secret_hint": ("…" + google_store.web_config()[1][-4:]) if google_store.web_config()[1] else "",
+            "web_enabled": bool(google_store.web_config()[0] and google_store.web_config()[1]),
         }
 
     @app.post("/api/admin/google/users", dependencies=admin_guarded)

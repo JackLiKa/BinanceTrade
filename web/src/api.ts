@@ -647,6 +647,7 @@ export interface AuthProviders {
     enabled: boolean
     configured: boolean
     device_flow: boolean
+    web_enabled: boolean
     users: number
   }
 }
@@ -812,6 +813,9 @@ export const api = {
 
   googlePoll: (flowId: string) =>
     request<GooglePollResult>('/api/auth/google/poll', json({ flow_id: flowId })),
+
+  googleExchange: (code: string) =>
+    request<{ ok: boolean; email: string }>('/api/auth/google/exchange', json({ code })),
 
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
 

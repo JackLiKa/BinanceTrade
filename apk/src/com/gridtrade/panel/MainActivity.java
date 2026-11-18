@@ -68,6 +68,7 @@ public class MainActivity extends Activity {
     private EditText tokenInput;
     private String server = "";
     private String injectedToken = "";
+    private String pendingOauthCode = "";
     private boolean pageFailed = false;
     private boolean tokenPushed = false;
 
@@ -83,6 +84,7 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(BG);
         root.setFitsSystemWindows(true);
         setContentView(root);
+        pendingOauthCode = oauthCodeFrom(getIntent());
         String savedServer = prefs.getString("server", "").trim();
         String savedToken = prefs.getString("token", "").trim();
         if (savedServer.isEmpty()) savedServer = DEFAULT_SERVER;
@@ -90,6 +92,39 @@ public class MainActivity extends Activity {
         // No embedded/stored token: open the web login page (Google OAuth or
         // token fallback) instead of blocking on the native token setup screen.
         showPanel(savedServer, savedToken);
+        if (!pendingOauthCode.isEmpty()) {
+            loadOauthCode(pendingOauthCode);
+        }
+    }
+
+    private String oauthCodeFrom(Intent intent) {
+        if (intent == null) return "";
+        Uri data = intent.getData();
+        if (data == null || !"gridtrade".equals(data.getScheme()) || !"oauth".equals(data.getHost())) {
+            return "";
+        }
+        String code = data.getQueryParameter("code");
+        return code == null ? "" : code.trim();
+    }
+
+    private void loadOauthCode(String code) {
+        pendingOauthCode = "";
+        if (code == null || code.isEmpty() || webView == null || server == null || server.isEmpty()) {
+            return;
+        }
+        String joiner = server.contains("?") ? "&" : "?";
+        webView.loadUrl(server + joiner + "oauth_code=" + Uri.encode(code));
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String code = oauthCodeFrom(intent);
+        if (!code.isEmpty()) {
+            pendingOauthCode = code;
+            if (webView != null) loadOauthCode(code);
+        }
     }
 
     private void showSetup() {

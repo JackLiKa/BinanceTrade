@@ -40,6 +40,17 @@ export function Login() {
   const google = providers?.google
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const oauthError = params.get('oauth_error')
+    if (oauthError) {
+      setError(oauthError)
+      params.delete('oauth_error')
+      const query = params.toString()
+      window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash)
+    }
+  }, [])
+
+  useEffect(() => {
     let active = true
     setServer(server)
     api
@@ -101,6 +112,22 @@ export function Login() {
     setBusy(true)
     setError(null)
     setPoll(null)
+    // Browser: standard OAuth redirect shows Google's account chooser. The
+    // Android WebView cannot host Google's embedded OAuth page, so it keeps
+    // using the device-code flow.
+    const shell = navigator.userAgent.includes('GridtradeShell')
+    if (google?.web_enabled) {
+      const query = 'next=' + encodeURIComponent(location.hash || '/') + (shell ? '&app=1' : '')
+      const url = '/api/auth/google/web/start?' + query
+      if (shell) {
+        // Opens the system browser via MainActivity.onCreateWindow; Google's
+        // OAuth page must not run inside the WebView.
+        window.open(url, '_blank', 'noopener,noreferrer')
+      } else {
+        window.location.href = url
+      }
+      return
+    }
     try {
       const started = await api.googleStart()
       setFlow(started)

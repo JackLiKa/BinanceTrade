@@ -9,6 +9,8 @@ import httpx
 import pytest
 
 from gridtrade.api.admin import AdminAuth
+from urllib.parse import parse_qs, urlparse
+
 from gridtrade.api.google_auth import (
     DEVICE_CODE_URL,
     TOKEN_URL,
@@ -16,6 +18,8 @@ from gridtrade.api.google_auth import (
     GoogleAuthError,
     GoogleAuthStore,
     GoogleDeviceFlow,
+    GoogleWebError,
+    GoogleWebOAuth,
 )
 
 
@@ -141,3 +145,39 @@ def test_admin_flag_and_google_admin_session(tmp_path: Path) -> None:
     assert auth.check(token) is True
     auth.logout(token)
     assert auth.check(token) is False
+
+
+def test_web_oauth_start_and_exchange(tmp_path: Path) -> None:
+    store = GoogleAuthStore(tmp_path / "auth.db")
+    store.set_web_config(client_id="web-client", client_secret="web-secret")
+    store.add_user("web@example.com")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == TOKEN_URL:
+            return httpx.Response(200, json={"access_token": "web-token"})
+        if str(request.url) == USERINFO_URL:
+            return httpx.Response(200, json={"email": "web@example.com", "email_verified": True})
+        return httpx.Response(404)
+
+    flow = GoogleWebOAuth(store, httpx.Client(transport=httpx.MockTransport(handler)))
+    url = flow.start(redirect_uri="https://gt.example.com/api/auth/google/callback", purpose="panel", next_path="/", app=True)
+    query = parse_qs(urlparse(url).query)
+    assert query["client_id"] == ["web-client"]
+    assert query["redirect_uri"] == ["https://gt.example.com/api/auth/google/callback"]
+    assert query["prompt"] == ["select_account"]
+    state = query["state"][0]
+    result = flow.exchange("code-1", state)
+    assert result["email"] == "web@example.com"
+    assert result["app"] is True
+    assert result["next"] == "/"
+    with pytest.raises(GoogleWebError):
+        flow.exchange("code-1", state)
+
+
+def test_one_time_app_codes_are_single_use(tmp_path: Path) -> None:
+    store = GoogleAuthStore(tmp_path / "auth.db")
+    store.add_user("app@example.com")
+    code = store.create_code("app@example.com")
+    assert store.consume_code(code) == "app@example.com"
+    assert store.consume_code(code) is None
+    assert store.consume_code("missing") is None

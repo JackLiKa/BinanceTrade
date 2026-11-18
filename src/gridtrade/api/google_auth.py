@@ -28,6 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -55,6 +56,11 @@ CREATE TABLE IF NOT EXISTS google_sessions (
     token TEXT PRIMARY KEY,
     email TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    expires_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS google_codes (
+    code TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
     expires_at REAL NOT NULL
 );
 """
@@ -122,6 +128,43 @@ class GoogleAuthStore:
         else:
             enabled = bool(client_id and client_secret)
         return GoogleConfig(enabled=enabled and bool(client_id and client_secret), client_id=client_id, client_secret=client_secret)
+
+    def web_config(self) -> tuple[str, str]:
+        with self._connect() as conn:
+            rows = {row["key"]: row["value"] for row in conn.execute("SELECT key, value FROM google_settings")}
+        return (
+            (rows.get("web_client_id") or os.environ.get("GOOGLE_WEB_CLIENT_ID", "")).strip(),
+            (rows.get("web_client_secret") or os.environ.get("GOOGLE_WEB_CLIENT_SECRET", "")).strip(),
+        )
+
+    def set_web_config(
+        self,
+        *,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        clear_secret: bool = False,
+    ) -> tuple[str, str]:
+        values: dict[str, str] = {}
+        if client_id is not None:
+            values["web_client_id"] = client_id.strip()
+        if clear_secret:
+            values["web_client_secret"] = ""
+        elif client_secret is not None and client_secret.strip():
+            values["web_client_secret"] = client_secret.strip()
+        if values:
+            with self._connect() as conn:
+                for key, value in values.items():
+                    conn.execute(
+                        "INSERT INTO google_settings(key, value) VALUES(?, ?)"
+                        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (key, value),
+                    )
+                conn.commit()
+        try:
+            self.db_path.chmod(0o600)
+        except OSError:
+            pass
+        return self.web_config()
 
     def set_config(
         self,
@@ -217,6 +260,36 @@ class GoogleAuthStore:
             )
             conn.commit()
         return cursor.rowcount > 0
+
+    # -- one-time app exchange codes ------------------------------------
+
+    def create_code(self, email: str, ttl: int = 180) -> str:
+        code = secrets.token_urlsafe(24)
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM google_codes WHERE expires_at < ?", (now,))
+            conn.execute(
+                "INSERT INTO google_codes(code, email, expires_at) VALUES(?, ?, ?)",
+                (code, email.strip().lower(), now + ttl),
+            )
+            conn.commit()
+        return code
+
+    def consume_code(self, code: str) -> str | None:
+        if not code:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT email, expires_at FROM google_codes WHERE code = ?", (code,)
+            ).fetchone()
+            conn.execute("DELETE FROM google_codes WHERE code = ?", (code,))
+            conn.commit()
+        if row is None or float(row["expires_at"]) < time.time():
+            return None
+        email = str(row["email"])
+        if not self.is_allowed(email):
+            return None
+        return email
 
     # -- sessions -------------------------------------------------------
 
@@ -428,3 +501,121 @@ class GoogleDeviceFlow:
         with self._lock:
             for flow_id in [key for key, flow in self._flows.items() if flow.expires_at + 3600 < now]:
                 self._flows.pop(flow_id, None)
+
+
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+WEB_STATE_TTL = 600
+
+
+class GoogleWebError(Exception):
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+class GoogleWebOAuth:
+    """Standard OAuth authorization-code flow (Web application client).
+
+    Redirect URI must be HTTPS (current public endpoint is
+    https://gt.jacklika.com). Google's account chooser appears directly.
+    """
+
+    def __init__(self, store: GoogleAuthStore, client: httpx.Client | None = None, *, relay_url: str = "", relay_token: str = "") -> None:
+        self.store = store
+        self._client = client
+        self.relay_url = relay_url.rstrip("/")
+        self.relay_token = relay_token
+        self._lock = threading.RLock()
+        self._states: dict[str, dict[str, Any]] = {}
+
+    def _http(self) -> httpx.Client:
+        if self._client is None:
+            self._client = httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0), follow_redirects=False)
+        return self._client
+
+    def _token_url(self) -> str:
+        return f"{self.relay_url}/token" if self.relay_url else TOKEN_URL
+
+    def _userinfo_url(self) -> str:
+        return f"{self.relay_url}/userinfo" if self.relay_url else USERINFO_URL
+
+    def _headers(self) -> dict[str, str]:
+        return {"X-Relay-Token": self.relay_token} if self.relay_token else {}
+
+    def start(self, *, redirect_uri: str, purpose: str, next_path: str, app: bool = False) -> str:
+        client_id, client_secret = self.store.web_config()
+        if not client_id or not client_secret:
+            raise GoogleWebError("Google Web 客户端未配置（需要 Web 应用的 Client ID/Secret）", 503)
+        state = secrets.token_urlsafe(24)
+        now = time.time()
+        with self._lock:
+            self._states = {key: value for key, value in self._states.items() if value["expires_at"] > now}
+            self._states[state] = {
+                "expires_at": now + WEB_STATE_TTL,
+                "purpose": purpose,
+                "next": next_path[:300],
+                "redirect_uri": redirect_uri,
+                "app": app,
+            }
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": SCOPE,
+            "state": state,
+            "prompt": "select_account",
+            "access_type": "online",
+            "include_granted_scopes": "true",
+        }
+        return GOOGLE_AUTH_URL + "?" + urlencode(params)
+
+    def exchange(self, code: str, state: str) -> dict[str, Any]:
+        with self._lock:
+            entry = self._states.pop(state, None)
+        if entry is None or entry["expires_at"] < time.time():
+            raise GoogleWebError("登录状态已过期，请重新发起 Google 登录", 400)
+        client_id, client_secret = self.store.web_config()
+        if not client_id or not client_secret:
+            raise GoogleWebError("Google Web 客户端未配置", 503)
+        try:
+            response = self._http().post(
+                self._token_url(),
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": entry["redirect_uri"],
+                },
+                headers=self._headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise GoogleWebError(f"无法连接 Google：{exc}", 502) from exc
+        payload = response.json() if response.content else {}
+        if payload.get("error"):
+            raise GoogleWebError(f"Google 登录失败：{payload.get('error_description') or payload['error']}", 401)
+        access_token = str(payload.get("access_token") or "")
+        if not access_token:
+            raise GoogleWebError("Google 未返回 access_token", 502)
+        try:
+            info_response = self._http().get(
+                self._userinfo_url(),
+                headers={**self._headers(), "Authorization": f"Bearer {access_token}"},
+            )
+            info = info_response.json()
+        except httpx.HTTPError as exc:
+            raise GoogleWebError(f"读取 Google 账号失败：{exc}", 502) from exc
+        email = str(info.get("email") or "").strip().lower()
+        if not email:
+            raise GoogleWebError("Google 账号没有返回邮箱", 401)
+        if info.get("email_verified") is False:
+            raise GoogleWebError("Google 邮箱未验证", 401)
+        return {
+            "email": email,
+            "name": str(info.get("name") or ""),
+            "picture": str(info.get("picture") or ""),
+            "purpose": entry["purpose"],
+            "next": entry["next"],
+            "app": bool(entry.get("app")),
+        }

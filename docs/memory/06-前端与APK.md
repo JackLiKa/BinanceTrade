@@ -15,7 +15,7 @@
 - 图表统一 lightweight-charts v5；4 个图表组件，单页最多 **2 个图表实例**（`Overview`、`Backtest` 回放、`Market`）。
 - 状态是 Context + `useState`（无 reducer）；行情走 WebSocket，断线指数退避重连（`web/src/store.tsx:126-187`）。
 - `params.ts` 只读写 `localStorage['gridtrade.params']`，**不做 URL/hash 参数序列化**（`web/src/params.ts:18-33`）。
-- APK：`versionCode 4 / versionName **0.3.0** / minSdk 26 / targetSdk 34`（2026-11-18 起默认不内嵌令牌，走 Google 登录）；`build.sh` 用 `javac --release 17`；**无 JS 桥**（全仓无 `addJavascriptInterface`；`apk/AndroidManifest.xml:4-7`、`apk/build.sh:65`）。
+- APK：`versionCode 5 / versionName **0.3.1** / minSdk 26 / targetSdk 34`（默认不内嵌令牌，走标准 Google OAuth + 深链回 App）；`build.sh` 用 `javac --release 17`；**无 JS 桥**（全仓无 `addJavascriptInterface`；`apk/AndroidManifest.xml:4-7`、`apk/build.sh:65`）。
 
 ## 目录
 
@@ -281,8 +281,9 @@ overview 响应字段：`env_path/token_hint/default_password/admin_username`、
 
 ## 8.5 登录与懒加载（2026-11-18）
 
-- 登录：优先 Google OAuth Device Flow（`/api/auth/google/start|poll`），成功后服务端设置 30 天
-  `gt_token` Cookie；`AppProvider` 启动时**始终**请求 `/api/session`（Cookie 会话没有 localStorage 令牌）。
+- 登录：浏览器优先标准 Google OAuth（`/api/auth/google/web/start` → 账号选择页 → `/api/auth/google/callback`）；
+  APK 通过系统浏览器 + `gridtrade://oauth?code=` 深链回 App，再用 `/api/auth/google/exchange` 换 Cookie。
+  Device Flow 作为备用保留；`AppProvider` 启动时始终请求 `/api/session`。
 - 静态令牌登录保留在登录页“使用访问令牌登录（备用）”。
 - 懒加载：`Market` 首屏 180 根 K 线 + “加载更多”；资金费历史/套息快照在滚动进入视口后才请求/渲染；
   图表 `useDeferredMount` 延后挂载；每个路由包 `ErrorBoundary`，单页异常不再黑屏。

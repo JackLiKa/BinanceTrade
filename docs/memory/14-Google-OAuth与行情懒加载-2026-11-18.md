@@ -121,6 +121,12 @@ GRIDTRADE_GOOGLE_RELAY_TOKEN=请替换为随机串
   `onPause` 调用 `CookieManager.flush()`，Google 会话跨重启保留。
 - 重打：`./apk/build.sh`；签名不变，覆盖安装。
 
+## 2.8 标准 OAuth 与 HTTPS（2026-11-18 终态）
+
+`jacklika.com` 已接入 Cloudflare Tunnel，公网地址 **https://gt.jacklika.com**；
+Web 客户端、账号选择页、后台 Google 登录、APK 系统浏览器 + `gridtrade://` 深链均已上线。
+详见 [15](15-HTTPS与标准Google-OAuth-2026-11-18.md)。
+
 ## 3. 测试与验证
 
 - pytest：**159 项**（新增 `tests/test_google_auth.py` 5 项；其余为原有）。

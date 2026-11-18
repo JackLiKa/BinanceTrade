@@ -53,22 +53,23 @@ cd web && pnpm dev     # http://localhost:5173
 
 ### 在线实例
 
-当前部署在 `http://81.71.71.131:8000`（systemd 常驻，令牌在服务器的 `var/token`）。
+当前部署在 **https://gt.jacklika.com**（Cloudflare Tunnel + 广州服务器 systemd；公网 8000 已关闭）。
 该实例目前是明文 HTTP，仅建议临时使用；公网长期使用应加 HTTPS 反向代理，详见
 [docs/memory/07-部署与运维.md](docs/memory/07-部署与运维.md)。
 
 ### 登录
 
-面板默认使用 **Google 账号登录**（OAuth Device Flow，管理员在 `/admin` 配置 Client ID/Secret 与允许邮箱）。
-登录页显示一次性 `code`，在任意浏览器打开 <https://www.google.com/device> 输入即可；成功后服务端设置
-30 天 `gt_token` httpOnly Cookie。APK 与网页共用该会话。
+面板默认使用 **Google 账号登录**（标准 OAuth，Web 应用客户端）。点击后直接打开 Google 账号选择页，
+授权后回到 `https://gt.jacklika.com` 并设置 30 天 `gt_token` httpOnly Cookie。
+APK 通过系统浏览器完成同一流程，再用 `gridtrade://oauth` 深链回 App。设备流作为备用方案保留。
 
 静态令牌仍是备用方式（登录页“使用访问令牌登录”）：令牌在服务器 `var/token`（权限 `0600`），
 支持 `Authorization: Bearer <token>`、`X-API-Token: <token>` 与 `/api/auth/login` Cookie；
 WebSocket 用 `?token=<token>`。
 
-> Google 登录前提：广州服务器需通过东京节点中继访问 Google（`GRIDTRADE_GOOGLE_RELAY`），
-> 并在 `/admin` 填好 OAuth 凭据。详见 [14](docs/memory/14-Google-OAuth与行情懒加载-2026-11-18.md)。
+> Google 登录前提：广州服务器通过东京节点中继访问 Google（`GRIDTRADE_GOOGLE_RELAY`），
+> `/admin` 已配置 TV（设备流）与 Web（账号选择页）两套客户端。详见
+> [15](docs/memory/15-HTTPS与标准Google-OAuth-2026-11-18.md)。
 
 ### 配置
 
@@ -88,6 +89,8 @@ WebSocket 用 `?token=<token>`。
 | `GRIDTRADE_PROXY` | 空 | 访问 Binance 的代理（`http://host:port` 或 `socks5://host:port`），需能 CONNECT 到 443 |
 | `GRIDTRADE_GOOGLE_RELAY` | 空 | 东京 Google OAuth 中继地址，如 `http://10.66.0.2:8101` |
 | `GRIDTRADE_GOOGLE_RELAY_TOKEN` | 空 | 中继共享头 `X-Relay-Token` |
+| `GRIDTRADE_PUBLIC_URL` | 空 | 公网 HTTPS 地址，用于 OAuth redirect URI，如 `https://gt.jacklika.com` |
+| `GRIDTRADE_SECURE_COOKIE` | `0` | HTTPS 部署时设 `1`，Cookie 加 Secure |
 | `GRIDTRADE_SECURE_COOKIE` | `0` | 为认证 Cookie 加 `Secure`（仅 HTTPS） |
 | `GRIDTRADE_CORS_ORIGINS` | localhost:5173 | 逗号分隔的开发源 |
 
@@ -216,13 +219,13 @@ adb install -r apk/gridtrade.apk
 部分 OPPO/OnePlus 机型会在 `adb install` 时卡在安装引导，可改用
 `pm install-create` / `pm install-write` / `pm install-commit` 分段安装。
 
-**APK v0.3.0 默认 Google 登录**：构建时读取 `apk/.env`（gitignore）写入服务器地址；
-`TOKEN` 留空时首次启动显示登录页，可选择 Google 账号或访问令牌。Google 授权页会交给系统浏览器，
-登录成功后 Cookie 保存在 WebView，重启仍有效。
+**APK v0.3.1 默认 Google 登录**：构建时读取 `apk/.env`（gitignore）写入服务器地址；
+`TOKEN` 留空时首次启动显示登录页。点击 Google 会打开系统浏览器完成标准 OAuth，授权后通过
+`gridtrade://oauth?code=...` 深链回 App，App 用一次性 code 换取 WebView Cookie。
 
 ```bash
 cp apk/.env.example apk/.env
-# SERVER_URL=http://81.71.71.131:8000
+# SERVER_URL=https://gt.jacklika.com
 # TOKEN=            # 留空 => 显示 Google 登录页；填令牌 => 自动登录（备用）
 ./apk/build.sh
 ```
@@ -247,9 +250,9 @@ cp apk/.env.example apk/.env
 
 ## 管理后台
 
-独立后台地址：`/admin`（与面板令牌分离，使用账号密码登录）。
+独立后台地址：**https://gt.jacklika.com/admin**（优先 Google 登录，管理员密码备用）。
 
-- 默认账号/密码：`admin / admin`（首次登录后请立即在“安全”里修改）。
+- 默认账号/密码：`admin / admin`（首次登录后请立即在“安全”里修改）；Google 账号需标记“后台”才能进。
 - 功能：概览（模拟盘/实盘状态）、Gate 实盘凭据与风控上限、模拟盘标的与参数、启动/停止/重置、轮换面板令牌、修改密码、审计日志。
 - **Google 登录**：配置 OAuth Client ID/Secret、启停、维护允许登录的 Google 邮箱；数据存 `var/auth.db`。
 - **后台 Google 登录**：登录页同样支持 Google OAuth（带官方 G 图标）；账号需在 Google 页被标记为“后台”才可进入，管理员密码保留为备用。
@@ -270,6 +273,7 @@ cp apk/.env.example apk/.env
 - [07 部署与运维](docs/memory/07-部署与运维.md)
 - [08 测试与验收](docs/memory/08-测试与验收.md)（桌面 Web 与真机 APK 的可复现步骤）
 - [14 Google OAuth 与行情懒加载](docs/memory/14-Google-OAuth与行情懒加载-2026-11-18.md)
+- [15 HTTPS 域名与标准 Google OAuth](docs/memory/15-HTTPS与标准Google-OAuth-2026-11-18.md)
 - [09 策略研究结论](docs/memory/09-策略研究结论.md)（**改策略前必读**）
 - [10 问题与决策记录](docs/memory/10-问题与决策记录.md)
 - [11 外部接口清单](docs/memory/11-外部接口清单.md)
@@ -283,7 +287,7 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 160 项
+.venv/bin/python -m pytest            # 162 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 

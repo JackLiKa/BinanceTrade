@@ -208,6 +208,7 @@ class Settings:
     binance_node_url: str = ""
     google_relay_url: str = ""
     google_relay_token: str = ""
+    public_url: str = ""
     token: str = ""
     cors_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
@@ -245,6 +246,7 @@ class Settings:
             binance_node_url=os.environ.get("GRIDTRADE_BINANCE_NODE_URL", "").strip(),
             google_relay_url=os.environ.get("GRIDTRADE_GOOGLE_RELAY", "").strip(),
             google_relay_token=os.environ.get("GRIDTRADE_GOOGLE_RELAY_TOKEN", "").strip(),
+            public_url=os.environ.get("GRIDTRADE_PUBLIC_URL", "").strip().rstrip("/"),
             token=os.environ.get("GRIDTRADE_TOKEN", "").strip(),
             cors_origins=[o.strip() for o in origins.split(",") if o.strip()],
             paper=PaperConfig.from_env(),

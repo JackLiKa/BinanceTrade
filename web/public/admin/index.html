@@ -194,9 +194,16 @@
           </p>
           <div id="googleStatus" class="banner hidden"></div>
           <div class="row">
-            <label><span>Client ID</span><input id="googleClientId" type="text" autocomplete="off" /></label>
-            <label><span>Client Secret（留空不改）</span><input id="googleClientSecret" type="password" autocomplete="new-password" /></label>
+            <label><span>TV Client ID（设备流用）</span><input id="googleClientId" type="text" autocomplete="off" /></label>
+            <label><span>TV Client Secret（留空不改）</span><input id="googleClientSecret" type="password" autocomplete="new-password" /></label>
           </div>
+          <div class="row">
+            <label><span>Web Client ID（账号选择页用）</span><input id="googleWebClientId" type="text" autocomplete="off" /></label>
+            <label><span>Web Client Secret（留空不改）</span><input id="googleWebClientSecret" type="password" autocomplete="new-password" /></label>
+          </div>
+          <p class="faint" style="font-size:10.5px;margin:-2px 0 10px">
+            Web 客户端 redirect URI：<span class="mono" id="googleRedirectUri">—</span>
+          </p>
           <div class="switch" style="margin:6px 0 12px"><input id="googleEnabled" type="checkbox" /><label for="googleEnabled" style="margin:0">启用 Google 登录</label></div>
           <div class="actions"><button class="primary" id="saveGoogleBtn">保存 Google 配置</button></div>
           <hr style="border:none;border-top:1px solid var(--line);margin:16px 0" />
@@ -239,7 +246,7 @@
 
     <script>
       const $ = (id) => document.getElementById(id);
-      const state = { overview: null, google: null };
+      const state = { overview: null, google: null, webEnabled: false };
       const toast = (text, tone = 'ok') => {
         const el = document.createElement('div');
         el.className = 'banner ' + tone;
@@ -300,6 +307,10 @@
 
       const startAdminGoogle = async () => {
         setLoginError('');
+        if (state.webEnabled) {
+          window.location.href = '/api/admin/google/web/start?next=/admin';
+          return;
+        }
         try {
           const started = await api('/api/admin/google/start', { method: 'POST' });
           adminFlow = started;
@@ -319,6 +330,7 @@
         try {
           const providers = await api('/api/auth/providers');
           if (!providers.google || !providers.google.enabled) return;
+          state.webEnabled = !!providers.google.web_enabled;
           $('adminGoogleBtn').classList.remove('hidden');
           if (!providers.google.admin_users) {
             $('adminGoogleBtn').title = '还没有被授予后台权限的 Google 账号，请先用管理员密码登录并添加';
@@ -414,11 +426,13 @@
         state.google = data;
         $('googleEnabled').checked = !!data.enabled;
         $('googleClientId').value = data.client_id || '';
+        $('googleWebClientId').value = data.web_client_id || '';
+        $('googleRedirectUri').textContent = data.redirect_uri || '—';
         const badge = $('googleStatus');
         badge.classList.remove('hidden');
         badge.className = 'banner ' + (data.enabled ? 'ok' : 'warn');
         badge.textContent = data.enabled
-          ? 'Google 登录已启用 · 允许 ' + data.users.length + ' 个账号'
+          ? 'Google 登录已启用 · 允许 ' + data.users.length + ' 个账号' + (data.web_enabled ? ' · Web 账号选择页已配置' : ' · 仅设备流')
           : data.configured
             ? '已配置凭据但未启用；勾选后保存即可开启'
             : '未配置 Client ID/Secret，Google 登录不可用';
@@ -465,9 +479,12 @@
           enabled: $('googleEnabled').checked,
         };
         if ($('googleClientSecret').value.trim()) payload.client_secret = $('googleClientSecret').value.trim();
+        if ($('googleWebClientId').value.trim()) payload.web_client_id = $('googleWebClientId').value.trim();
+        if ($('googleWebClientSecret').value.trim()) payload.web_client_secret = $('googleWebClientSecret').value.trim();
         try {
           await api('/api/admin/google/config', { method: 'POST', body: JSON.stringify(payload) });
           $('googleClientSecret').value = '';
+          $('googleWebClientSecret').value = '';
           toast('Google 配置已保存');
           await loadGoogle();
         } catch (err) { toast(err.message, 'err'); }
@@ -587,6 +604,11 @@
         }
       });
 
+      const oauthError = new URLSearchParams(location.search).get('oauth_error');
+      if (oauthError) {
+        setLoginError(oauthError);
+        history.replaceState(null, '', location.pathname + location.hash);
+      }
       initAdminGoogle();
       boot();
       setInterval(() => { if (!$('appView').classList.contains('hidden')) loadOverview(); }, 15000);

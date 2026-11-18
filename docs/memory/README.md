@@ -15,8 +15,8 @@
 | 代码量 | Python `src/gridtrade` 约 5,400 行；前端 `web/src` 约 7,100 行；`MainActivity.java` 538 行 |
 | 页面 | **12 条 hash 路由** + 独立管理后台 `/admin` + Swagger `/api/docs` + `/ws` |
 | 接口 | **46 个路由装饰器** = 45 条 HTTP（43 进 OpenAPI：44 path / 45 operation）+ 1 条 WebSocket |
-| 测试 | pytest **160 项**（含 Google 登录/设备流/后台权限 6 项；POSIX 全绿） |
-| 线上 | `http://81.71.71.131:8000`（**明文 HTTP**），令牌在服务器 `var/token` |
+| 测试 | pytest **162 项**（含 Google 标准/设备流/后台权限 8 项；POSIX 全绿） |
+| 线上 | **https://gt.jacklika.com**（Cloudflare Tunnel + HTTPS）；8000 已关闭 |
 | 实盘 | Gate USDT 永续**只读分析可用**；下单代码完备但**默认锁定**（未启用 409 / 未解锁 403） |
 | 认证 | 面板：静态令牌 **或** Google 白名单会话；后台：Google（需“后台”标记）或 `admin` 密码 |
 | 最大风险 | 明文 HTTP + 默认后台密码 `admin/admin`；Google 登录需东京中继 |
@@ -42,6 +42,7 @@
 | 12 | [12 待办与路线图](12-待办与路线图.md) | P0–P4 待办、Binance Plan B 方案、需用户决策的事项 | 排期、决策 |
 | 13 | [13 历史归档](13-历史归档.md) | 提交时间线、两天开发流水、2026-11-17 对话决策、旧文档→新文档映射 | 复盘、追溯 |
 | 14 | [14 Google OAuth 与行情懒加载](14-Google-OAuth与行情懒加载-2026-11-18.md) | Device Flow 登录、后台白名单、行情页黑屏根因与懒加载、APK v0.3.0 | 配登录、改行情页的人 |
+| 15 | [15 HTTPS 域名与标准 Google OAuth](15-HTTPS与标准Google-OAuth-2026-11-18.md) | `jacklika.com` + Cloudflare Tunnel、账号选择页、Web/Admin/APK 深链 | 维护域名/隧道/登录的人 |
 | — | [vault/ 原始笔记索引](vault/README.md) | 19 篇 DSH 原始笔记的逐篇索引、主题聚类、冲突与缺口 | 想追溯第一手记录的人 |
 
 > 每篇文档头部都有 **用途 / 读者 / 最后核实 / 相关文档 / 可信度** 五元组。可信度：**A** = 已对照当前代码或本机实测；**B** = 历史笔记，未复核；**C** = 需设备/服务器才能复现。
@@ -170,7 +171,7 @@ src/gridtrade/          # 领域、策略、执行、风控、研究、API（api
 web/                    # React 19 + Vite 6 + Tailwind 4 SPA；public/admin/index.html 是后台页
 apk/                    # 无 Gradle 的 Android 构建：manifest、单 Activity、build.sh、预编译 apk
 research/               # fetch.py（抓数据）、backtest.py（旧版脚本，仅历史参考）
-tests/                  # 12 个 pytest 文件 + conftest.py（160 项）
+tests/                  # 12 个 pytest 文件 + conftest.py（162 项）
 docs/screens/           # 14 张验收截图
 docs/memory/            # 本文档集（入口就是本文件）
 var/                    # 运行期：三个 SQLite + token（不入库）

@@ -83,7 +83,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Cookie sessions (Google OAuth) exist without a localStorage token, so
     // always ask the server; 401 simply means "show the login page".
-    void refreshSession()
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('oauth_code')
+    const run = async () => {
+      if (code) {
+        try {
+          await api.googleExchange(code)
+        } catch (err) {
+          setError(err instanceof ApiError ? err.message : 'Google 登录码无效')
+        }
+        params.delete('oauth_code')
+        const query = params.toString()
+        window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash)
+      }
+      await refreshSession()
+    }
+    void run()
   }, [refreshSession])
 
   const setSymbol = useCallback((next: string) => {
