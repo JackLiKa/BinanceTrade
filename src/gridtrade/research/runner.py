@@ -31,6 +31,7 @@ class ResearchParams:
     intrabar: bool = False
     liquidation_enabled: bool = True
     liquidation_fee: float = 0.005
+    insurance_fund_balance: float = 0.0
     maintenance_tiers: tuple[MaintenanceTier, ...] | None = None
 
     def grid_params(self) -> GridParams:
@@ -51,6 +52,7 @@ class ResearchParams:
             stop_dd=self.stop_dd,
             liquidation_enabled=self.liquidation_enabled,
             liquidation_fee=self.liquidation_fee,
+            insurance_fund_balance=self.insurance_fund_balance,
             maintenance_tiers=self.maintenance_tiers,
         )
 

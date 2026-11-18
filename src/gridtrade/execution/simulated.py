@@ -70,6 +70,7 @@ class SimExecution:
         maintenance_tiers=DEFAULT_MAINTENANCE_TIERS,
         liquidation_fee: float = 0.005,
         liquidation_enabled: bool = True,
+        insurance_fund_balance: float = 0.0,
     ) -> None:
         self.symbol = symbol
         self.filters = filters
@@ -88,6 +89,7 @@ class SimExecution:
         self.maintenance_tiers = tuple(maintenance_tiers)
         self.liquidation_fee = max(0.0, float(liquidation_fee))
         self.liquidation_enabled = bool(liquidation_enabled)
+        self.insurance_fund_balance = max(0.0, float(insurance_fund_balance or 0.0))
         self.liquidated = False
         self.liquidation: LiquidationEvent | None = None
 
@@ -307,9 +309,13 @@ class SimExecution:
         pnl = self.position * (fill_price - entry)
         cash_after = wallet + pnl - fee
         # Cross margin can leave negative equity only when the price gaps
-        # through the liquidation price / liquidation fails.  Do NOT silently
-        # floor this to zero: reporting bad debt is the honest accounting.
+        # through the liquidation price / liquidation fails.  Binance's
+        # insurance fund covers the first part of that shortfall; only the
+        # uncovered part becomes the account's negative equity/bad debt.
         bad_debt = max(0.0, -cash_after)
+        insurance_covered = min(bad_debt, self.insurance_fund_balance)
+        uncovered_bad_debt = max(0.0, bad_debt - insurance_covered)
+        cash_after = -uncovered_bad_debt
         event = LiquidationEvent(
             ts=ts,
             symbol=self.symbol,
@@ -323,6 +329,8 @@ class SimExecution:
             margin_balance=wallet + pnl,
             fee=fee,
             bad_debt=bad_debt,
+            insurance_covered=insurance_covered,
+            uncovered_bad_debt=uncovered_bad_debt,
             reason=reason,
         )
         self.cancel_group("")

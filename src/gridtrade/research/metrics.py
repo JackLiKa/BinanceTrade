@@ -21,6 +21,8 @@ def compute_stats(
     liquidation_price: float | None = None,
     liquidation_time: str | None = None,
     bad_debt: float = 0.0,
+    insurance_covered: float = 0.0,
+    uncovered_bad_debt: float = 0.0,
 ) -> dict:
     if len(equity) == 0:
         return {"total_return": 0.0, "ann_return": 0.0, "max_dd": 0.0, "sharpe": 0.0}
@@ -61,4 +63,6 @@ def compute_stats(
         "liquidation_time": liquidation_time,
         "bad_debt": round(float(bad_debt), 2),
         "bad_debt_pct": round(float(bad_debt) / capital * 100, 2) if capital else 0.0,
+        "insurance_covered": round(float(insurance_covered), 2),
+        "uncovered_bad_debt": round(float(uncovered_bad_debt), 2),
     }

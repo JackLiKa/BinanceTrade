@@ -35,6 +35,7 @@ class BacktestConfig:
     stop_dd: float | None = 0.10
     liquidation_enabled: bool = True
     liquidation_fee: float = 0.005
+    insurance_fund_balance: float = 0.0
     maintenance_tiers: tuple[MaintenanceTier, ...] | None = None
 
 
@@ -100,6 +101,7 @@ class ReplayEngine:
             intrabar=self.config.intrabar,
             liquidation_enabled=self.config.liquidation_enabled,
             liquidation_fee=self.config.liquidation_fee,
+            insurance_fund_balance=self.config.insurance_fund_balance,
             maintenance_tiers=self.config.maintenance_tiers or DEFAULT_MAINTENANCE_TIERS,
         )
         first_price = float(dataset.bars["open"].iloc[0])
@@ -190,6 +192,8 @@ class ReplayEngine:
             liquidation_price=(self._liquidation or {}).get("liquidation_price"),
             liquidation_time=(self._liquidation or {}).get("ts"),
             bad_debt=(self._liquidation or {}).get("bad_debt", 0.0),
+            insurance_covered=(self._liquidation or {}).get("insurance_covered", 0.0),
+            uncovered_bad_debt=(self._liquidation or {}).get("uncovered_bad_debt", 0.0),
         )
         return BacktestResult(
             symbol=self.dataset.symbol,

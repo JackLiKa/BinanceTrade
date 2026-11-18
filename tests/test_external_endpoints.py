@@ -20,6 +20,8 @@ BINANCE_FAPI = {
     "/fapi/v1/ticker/bookTicker": "Binance USDⓈ-M Futures · Symbol Order Book Ticker",
     "/fapi/v1/klines": "Binance USDⓈ-M Futures · Kline Candlestick Data",
     "/fapi/v1/markPriceKlines": "Binance USDⓈ-M Futures · Mark Price Kline Candlestick Data",
+    "/fapi/v1/insuranceBalance": "Binance USDⓈ-M Futures · Insurance Fund Balance Snapshot",
+    "/fapi/v1/symbolAdlRisk": "Binance USDⓈ-M Futures · ADL Risk Rating",
     "/fapi/v1/fundingRate": "Binance USDⓈ-M Futures · Get Funding Rate History",
     "/fapi/v1/exchangeInfo": "Binance USDⓈ-M Futures · Exchange Information",
     "/fapi/v1/fundingInfo": "Binance USDⓈ-M Futures · Get Funding Rate Info",

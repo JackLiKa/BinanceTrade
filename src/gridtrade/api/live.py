@@ -99,6 +99,57 @@ class LiveMarket:
         payload["source"] = "node"
         return payload
 
+    async def node_insurance_balance(self, symbol: str | None = None) -> dict[str, Any] | None:
+        if not self.node_url:
+            return None
+        try:
+            client = await self.node_client()
+            response = await client.get(
+                "/market/insurance-balance", params={"symbol": symbol} if symbol else None
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:  # noqa: BLE001 - node optional
+            return None
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            return None
+        assets = payload.get("assets") or []
+        usdt = next(
+            (item for item in assets if str(item.get("asset", "")).upper() == "USDT"),
+            None,
+        )
+        try:
+            balance = float(usdt.get("marginBalance", 0)) if usdt else 0.0
+        except (TypeError, ValueError):
+            balance = 0.0
+        return {
+            "balance_usdt": balance,
+            "assets": assets,
+            "symbols_count": payload.get("symbols_count"),
+            "source": "node",
+            "updated_at": round(time.time(), 3),
+        }
+
+    async def node_adl_risk(self, symbol: str) -> dict[str, Any] | None:
+        if not self.node_url:
+            return None
+        try:
+            client = await self.node_client()
+            response = await client.get("/market/adl-risk", params={"symbol": symbol})
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:  # noqa: BLE001 - node optional
+            return None
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            return None
+        data = payload.get("data") or {}
+        return {
+            "symbol": symbol,
+            "adl_risk": str(data.get("adlRisk") or "").lower() or None,
+            "update_time": data.get("updateTime"),
+            "source": "node",
+        }
+
     async def node_snapshot(self, symbol: str) -> dict[str, Any] | None:
         if not self.node_url:
             return None

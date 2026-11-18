@@ -197,6 +197,8 @@ class LiquidationEvent:
     margin_balance: float
     fee: float
     bad_debt: float
+    insurance_covered: float
+    uncovered_bad_debt: float
     reason: str
 
     def as_dict(self) -> dict:
@@ -213,5 +215,7 @@ class LiquidationEvent:
             "margin_balance": self.margin_balance,
             "fee": self.fee,
             "bad_debt": self.bad_debt,
+            "insurance_covered": self.insurance_covered,
+            "uncovered_bad_debt": self.uncovered_bad_debt,
             "reason": self.reason,
         }

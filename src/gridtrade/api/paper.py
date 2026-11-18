@@ -272,6 +272,20 @@ class NodeFeed:
             rows.append(item)
         return rows
 
+    def insurance_balance(self, symbol: str) -> float | None:
+        payload = self._get("/market/insurance-balance", {"symbol": self._binance(symbol)})
+        assets = payload.get("assets") or []
+        usdt = next(
+            (row for row in assets if str(row.get("asset", "")).upper() == "USDT"),
+            None,
+        )
+        if not usdt:
+            return None
+        try:
+            return float(usdt.get("marginBalance") or 0.0)
+        except (TypeError, ValueError):
+            return None
+
     def leverage_bracket(self, symbol: str) -> tuple[MaintenanceTier, ...] | None:
         payload = self._get("/market/leverage-bracket", {"symbol": self._binance(symbol)})
         rows = payload.get("brackets") or []
@@ -369,6 +383,7 @@ class PaperEngine:
         self.liquidation: dict[str, Any] | None = None
         self.wallet_balance = config.capital
         self.maintenance_margin = 0.0
+        self.insurance_fund_balance = 0.0
         self._init_db()
         self._load()
 
@@ -679,6 +694,15 @@ class PaperEngine:
         except Exception:  # noqa: BLE001 - optional exchange detail
             return DEFAULT_MAINTENANCE_TIERS
 
+    @staticmethod
+    def _resolve_insurance(feed: Feed, symbol: str) -> float:
+        if not isinstance(feed, NodeFeed):
+            return 0.0
+        try:
+            return max(0.0, feed.insurance_balance(symbol) or 0.0)
+        except Exception:  # noqa: BLE001 - optional exchange detail
+            return 0.0
+
     def _mark_equity(self) -> None:
         unrealized = sum(state.unrealized for state in self.state.values())
         self.gross = self._gross()
@@ -728,9 +752,11 @@ class PaperEngine:
             self.account.cash -= fee
             self.account.fees += fee
             fees += fee
-        bad_debt = max(0.0, -self.account.cash)
-        # Keep negative cash/equity when a gap creates bad debt.  Normal
-        # liquidations leave a non-negative balance; do not hide the edge case.
+        gross_bad_debt = max(0.0, -self.account.cash)
+        insurance_covered = min(gross_bad_debt, self.insurance_fund_balance)
+        uncovered_bad_debt = max(0.0, gross_bad_debt - insurance_covered)
+        self.account.cash = -uncovered_bad_debt
+        bad_debt = uncovered_bad_debt
         self._mark_equity()
         self.liquidation = {
             "ts": _iso(now),
@@ -738,14 +764,16 @@ class PaperEngine:
             "equity_before": round(equity_before, 6),
             "maintenance_margin": round(maintenance, 6),
             "cash_after": round(self.account.cash, 6),
-            "bad_debt": round(bad_debt, 6),
+            "bad_debt": round(gross_bad_debt, 6),
+            "insurance_covered": round(insurance_covered, 6),
+            "uncovered_bad_debt": round(uncovered_bad_debt, 6),
             "liquidation_fee": round(fees, 6),
             "positions": positions_snapshot,
         }
         self.status = "halted"
         self.last_error = (
             f"爆仓强平：权益 ${equity_before:.2f} <= 维持保证金 ${maintenance:.2f}；"
-            f"强平费 ${fees:.2f}，坏账 ${bad_debt:.2f}"
+            f"强平费 ${fees:.2f}，保险基金覆盖 ${insurance_covered:.2f}，未覆盖坏账 ${uncovered_bad_debt:.2f}"
         )
         self._mark_equity()
         self._stop.set()
@@ -797,6 +825,7 @@ class PaperEngine:
         if not symbols:
             raise ValueError("模拟盘未配置标的（GRIDTRADE_PAPER_SYMBOLS）")
         contracts = {symbol: feed.contract(symbol) for symbol in symbols}
+        self.insurance_fund_balance = self._resolve_insurance(feed, symbols[0]) if symbols else 0.0
         rows = feed.tickers(symbols)
         by_symbol = {str(row.get("contract", "")).upper(): row for row in rows}
         cfg = self.config
@@ -852,6 +881,7 @@ class PaperEngine:
         self.equity = float(cfg.capital)
         self.gross = 0.0
         self.liquidation = None
+        self.insurance_fund_balance = 0.0
         self.wallet_balance = float(cfg.capital)
         self.maintenance_margin = 0.0
         self.started_at = _iso(time.time())
@@ -1286,6 +1316,7 @@ class PaperEngine:
                     "maintenance_margin": maintenance,
                     "margin_ratio": margin_ratio,
                     "liquidation_fee_bp": self.config.liquidation_fee_bp,
+                    "insurance_fund_balance": self.insurance_fund_balance,
                     "leverage": self.config.leverage,
                     "peak_equity": account.peak_equity,
                     "drawdown_pct": drawdown,

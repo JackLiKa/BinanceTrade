@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { api, type BinanceFillView, type BinanceOrderView, type BinancePositionView } from '../api'
-import { Badge, Button, Card, CardHead, ErrorNote, Skeleton } from '../components/ui'
+import { Badge, Button, Card, CardHead, ErrorNote, Skeleton, Stat } from '../components/ui'
 import { useFetch } from '../hooks'
+import { fmtMoney } from '../format'
 
 function num(value: string | number | null | undefined): number {
   const parsed = typeof value === 'number' ? value : Number(value ?? 0)
@@ -37,6 +38,10 @@ export function Binance({ mode = 'account' }: { mode?: 'account' | 'execution' }
   const criticalAlerts = alerts.filter((row) => row.level === 'critical')
   const warnAlerts = alerts.filter((row) => row.level === 'warn')
   const errors = data?.errors ?? {}
+  const insurance = data?.insurance
+  const insuranceUsdt = insurance?.assets?.find((row) => row.asset.toUpperCase() === 'USDT')
+  const adl = data?.adl_risk?.data
+  const adlRisk = Array.isArray(adl) ? undefined : adl?.adlRisk
   const offline = !health || health.reachable === false
 
   return (
@@ -74,6 +79,37 @@ export function Binance({ mode = 'account' }: { mode?: 'account' | 'execution' }
           </Button>
         </div>
       </div>
+
+      <Card>
+        <CardHead
+          title="保险基金 / ADL"
+          hint="Binance 官方公开快照；仅用于风险展示，不等同于 Binance 内部穿仓分摊算法"
+          right={
+            <div className="flex items-center gap-2">
+              {adlRisk ? <Badge tone={adlRisk === 'HIGH' ? 'down' : adlRisk === 'MEDIUM' ? 'warn' : 'up'}>ADL {adlRisk}</Badge> : null}
+              <Badge tone="neutral">USDT 基金</Badge>
+            </div>
+          }
+        />
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Stat
+            label="保险基金 USDT"
+            value={insuranceUsdt ? `$${fmtMoney(Number(insuranceUsdt.marginBalance), 0)}` : '—'}
+            sub={insuranceUsdt ? `更新 ${stamp(insuranceUsdt.updateTime)}` : '节点未返回'}
+          />
+          <Stat
+            label="覆盖标的数"
+            value={insurance?.symbols_count != null ? String(insurance.symbols_count) : '—'}
+            sub="该基金快照覆盖的 symbol 数"
+          />
+          <Stat
+            label="当前 ADL 风险"
+            value={adlRisk ?? '—'}
+            sub={adlRisk ? 'low / medium / high' : '节点未返回'}
+            tone={adlRisk === 'HIGH' ? -1 : adlRisk === 'MEDIUM' ? 0 : 1}
+          />
+        </div>
+      </Card>
 
       {state.error ? <ErrorNote>{state.error}</ErrorNote> : null}
       {!state.error && data && Object.keys(errors).length > 0 ? (

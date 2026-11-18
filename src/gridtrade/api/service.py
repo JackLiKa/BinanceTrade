@@ -105,6 +105,21 @@ class ResearchService:
                 rows = bracket_payload.get("brackets") or []
                 tiers = tiers_from_brackets(rows)
                 fee = params.liquidation_fee
+                insurance = params.insurance_fund_balance
+                try:
+                    insurance_response = client.get(
+                        "/market/insurance-balance", params={"symbol": symbol}
+                    )
+                    insurance_response.raise_for_status()
+                    assets = (insurance_response.json() or {}).get("assets") or []
+                    usdt = next(
+                        (row for row in assets if str(row.get("asset", "")).upper() == "USDT"),
+                        None,
+                    )
+                    if usdt:
+                        insurance = float(usdt.get("marginBalance") or 0.0)
+                except (ValueError, TypeError, httpx.HTTPError):
+                    pass
                 try:
                     contract_response = client.get(
                         "/market/contract", params={"symbol": symbol}
@@ -120,6 +135,7 @@ class ResearchService:
                         params,
                         maintenance_tiers=tiers,
                         liquidation_fee=fee,
+                        insurance_fund_balance=insurance,
                     )
         except (ValueError, TypeError, httpx.HTTPError):
             return params
@@ -554,7 +570,11 @@ def _month_rows(result, capital: float) -> list[dict[str, Any]]:
     for position, (period, series) in enumerate(periods):
         last = float(series.iloc[-1])
         peak = series.cummax()
-        drawdown = float((1.0 - series / peak).max() * 100)
+        drawdown = (
+            float((1.0 - series / peak.replace(0, np.nan)).max() * 100)
+            if float(peak.max()) > 0
+            else 0.0
+        )
         key = str(period)
         trades, fees = fills.get(key, [0, 0.0])
         rows.append(

@@ -216,8 +216,10 @@ export function Paper() {
           <ErrorNote>
             已触发 Binance 式爆仓强平：权益 ${fmtMoney(data.liquidation.equity_before, 2)} ≤ 维持保证金 $
             {fmtMoney(data.liquidation.maintenance_margin, 2)}；强平费 ${fmtMoney(data.liquidation.liquidation_fee, 3)}，
-            坏账 ${fmtMoney(data.liquidation.bad_debt, 2)}
-            {data.account.equity < 0 ? `；账户权益为负，已记穿仓坏账` : ''}。
+            坏账 ${fmtMoney(data.liquidation.bad_debt, 2)}，保险覆盖 $
+            {fmtMoney(data.liquidation.insurance_covered ?? 0, 2)}，未覆盖 $
+            {fmtMoney(data.liquidation.uncovered_bad_debt ?? data.liquidation.bad_debt, 2)}
+            {data.account.equity < 0 ? `；账户权益为负` : ''}。
           </ErrorNote>
         ) : null}
         {data.cost ? (

@@ -209,6 +209,7 @@ export interface PaperState {
     maintenance_margin?: number
     margin_ratio?: number | null
     liquidation_fee_bp?: number
+    insurance_fund_balance?: number
     leverage: number
     peak_equity: number
     drawdown_pct: number
@@ -222,6 +223,8 @@ export interface PaperState {
     maintenance_margin: number
     cash_after: number
     bad_debt: number
+    insurance_covered?: number
+    uncovered_bad_debt?: number
     liquidation_fee: number
     positions: Array<{ symbol: string; qty: number; mark: number; avg_entry: number }>
   } | null
@@ -477,6 +480,8 @@ export interface BinanceState {
   fills?: { ok: boolean; fills: BinanceFillView[] }
   history?: { ok: boolean; orders: BinanceOrderView[] }
   alerts?: { ok: boolean; alerts: BinanceAlert[]; last_run_at?: number; last_error?: string | null }
+  insurance?: { ok: boolean; assets: Array<{ asset: string; marginBalance: string; updateTime: number }>; symbols_count?: number }
+  adl_risk?: { ok: boolean; data: { symbol: string; adlRisk: string; updateTime: number } | Array<{ symbol: string; adlRisk: string; updateTime: number }> }
   errors?: Record<string, string>
 }
 

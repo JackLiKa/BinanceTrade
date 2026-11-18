@@ -107,6 +107,14 @@ class BinanceNodeClient:
             params["symbol"] = symbol.upper()
         return self._get("/orders", params)
 
+    def insurance_balance(self, symbol: str | None = None) -> dict[str, Any]:
+        params = {"symbol": symbol.upper()} if symbol else None
+        return self._get("/market/insurance-balance", params)
+
+    def adl_risk(self, symbol: str | None = None) -> dict[str, Any]:
+        params = {"symbol": symbol.upper()} if symbol else None
+        return self._get("/market/adl-risk", params)
+
     def alerts(self, limit: int = 20) -> dict[str, Any]:
         """Recent reconciliation alerts from the node (may be empty)."""
         return self._get("/alerts", {"limit": limit})

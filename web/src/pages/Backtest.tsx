@@ -115,12 +115,20 @@ function StatBlock({ artifact }: { artifact: ReplayArtifact }) {
         sub="正数为支出"
       />
       {Number(summary.bad_debt ?? 0) > 0 ? (
-        <Stat
-          label="穿仓坏账"
-          value={`$${fmtMoney(Number(summary.bad_debt), 2)}`}
-          sub={`占本金 ${fmtMoney(Number(summary.bad_debt_pct ?? 0), 2)}%`}
-          tone={-1}
-        />
+        <>
+          <Stat
+            label="穿仓坏账"
+            value={`$${fmtMoney(Number(summary.bad_debt), 2)}`}
+            sub={`保险覆盖 $${fmtMoney(Number(summary.insurance_covered ?? 0), 2)}`}
+            tone={-1}
+          />
+          <Stat
+            label="未覆盖坏账"
+            value={`$${fmtMoney(Number(summary.uncovered_bad_debt ?? 0), 2)}`}
+            sub={`占本金 ${fmtMoney(Number(summary.bad_debt_pct ?? 0), 2)}%`}
+            tone={-1}
+          />
+        </>
       ) : null}
       {summary.liquidation_price != null ? (
         <Stat

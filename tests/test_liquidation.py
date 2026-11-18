@@ -174,3 +174,25 @@ def test_binance_cross_margin_formula_example() -> None:
         1, 20.0, 100_000.0, 50_000.0, 2_232.5, -2_500.0, 1_975.0, 0.0067
     )
     assert price == pytest.approx(98_296.46, rel=1e-6)
+
+
+def test_insurance_fund_absorbs_uncovered_bad_debt() -> None:
+    port = SimExecution(
+        "TESTUSDT",
+        FILTERS,
+        SimFees(maker=0.0, taker=0.0, slip_bp=0.0),
+        10.0,
+        insurance_fund_balance=1_000.0,
+    )
+    port.position = 1.0
+    port.entry_price = 100.0
+    port.cash = -90.0
+    port._mark = 100.0
+
+    event = port.check_liquidation(bar(80.0, 82.0, 79.0, 81.0))
+
+    assert event is not None
+    assert event.bad_debt > 0
+    assert event.insurance_covered == pytest.approx(event.bad_debt)
+    assert event.uncovered_bad_debt == 0.0
+    assert port.cash == pytest.approx(0.0)

@@ -177,6 +177,51 @@ class Handler(BaseHTTPRequestHandler):
                         },
                     )
                     return
+                if route == "/market/insurance-balance":
+                    sym = (symbol or "").upper()
+                    params = {"symbol": sym} if sym else None
+                    payload = client._request("GET", "/fapi/v1/insuranceBalance", params)
+                    if isinstance(payload, list):
+                        totals: dict[str, dict] = {}
+                        symbols_count = 0
+                        for group in payload:
+                            if not isinstance(group, dict):
+                                continue
+                            symbols_count += len(group.get("symbols") or [])
+                            for row in group.get("assets") or []:
+                                asset = str(row.get("asset") or "")
+                                if not asset:
+                                    continue
+                                total = totals.setdefault(
+                                    asset, {"asset": asset, "marginBalance": 0.0, "updateTime": 0}
+                                )
+                                try:
+                                    total["marginBalance"] += float(row.get("marginBalance") or 0.0)
+                                except (TypeError, ValueError):
+                                    pass
+                                total["updateTime"] = max(
+                                    int(total["updateTime"]), int(row.get("updateTime") or 0)
+                                )
+                        assets = list(totals.values())
+                    else:
+                        assets = payload.get("assets", []) if isinstance(payload, dict) else []
+                        symbols_count = len(payload.get("symbols", [])) if isinstance(payload, dict) else 0
+                    self._send(
+                        HTTPStatus.OK,
+                        {
+                            "ok": True,
+                            "symbol": sym or None,
+                            "assets": assets,
+                            "symbols_count": symbols_count,
+                        },
+                    )
+                    return
+                if route == "/market/adl-risk":
+                    sym = (symbol or "").upper()
+                    params = {"symbol": sym} if sym else None
+                    payload = client._request("GET", "/fapi/v1/symbolAdlRisk", params)
+                    self._send(HTTPStatus.OK, {"ok": True, "data": payload})
+                    return
                 if route == "/market/mark-klines":
                     sym = (symbol or "BTCUSDT").upper()
                     interval = (query.get("interval") or ["1m"])[0]
