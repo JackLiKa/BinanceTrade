@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS google_users (
     name TEXT NOT NULL DEFAULT '',
     added_at TEXT NOT NULL,
     added_by TEXT NOT NULL DEFAULT 'admin',
-    active INTEGER NOT NULL DEFAULT 1
+    active INTEGER NOT NULL DEFAULT 1,
+    is_admin INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS google_sessions (
     token TEXT PRIMARY KEY,
@@ -95,6 +96,9 @@ class GoogleAuthStore:
         self._lock = threading.RLock()
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(google_users)")}
+            if "is_admin" not in columns:
+                conn.execute("ALTER TABLE google_users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
             conn.commit()
         try:
             self.db_path.chmod(0o600)
@@ -156,20 +160,28 @@ class GoogleAuthStore:
     def list_users(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT email, name, added_at, added_by, active FROM google_users ORDER BY email"
+                "SELECT email, name, added_at, added_by, active, is_admin FROM google_users ORDER BY email"
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def add_user(self, email: str, name: str = "", added_by: str = "admin") -> dict[str, Any]:
+    def add_user(
+        self,
+        email: str,
+        name: str = "",
+        added_by: str = "admin",
+        is_admin: bool = False,
+    ) -> dict[str, Any]:
         address = normalize_email(email)
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO google_users(email, name, added_at, added_by, active) VALUES(?, ?, ?, ?, 1)"
-                " ON CONFLICT(email) DO UPDATE SET name = excluded.name, active = 1",
-                (address, name.strip()[:120], _iso(), added_by),
+                "INSERT INTO google_users(email, name, added_at, added_by, active, is_admin)"
+                " VALUES(?, ?, ?, ?, 1, ?)"
+                " ON CONFLICT(email) DO UPDATE SET name = excluded.name, active = 1,"
+                " is_admin = MAX(google_users.is_admin, excluded.is_admin)",
+                (address, name.strip()[:120], _iso(), added_by, 1 if is_admin else 0),
             )
             conn.commit()
-        return {"email": address, "name": name.strip()[:120], "active": True}
+        return {"email": address, "name": name.strip()[:120], "active": True, "is_admin": is_admin}
 
     def remove_user(self, email: str) -> bool:
         address = normalize_email(email)
@@ -186,6 +198,25 @@ class GoogleAuthStore:
                 "SELECT 1 FROM google_users WHERE email = ? AND active = 1", (address,)
             ).fetchone()
         return row is not None
+
+    def is_admin(self, email: str) -> bool:
+        address = email.strip().lower()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM google_users WHERE email = ? AND active = 1 AND is_admin = 1",
+                (address,),
+            ).fetchone()
+        return row is not None
+
+    def set_admin(self, email: str, enabled: bool) -> bool:
+        address = normalize_email(email)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE google_users SET is_admin = ? WHERE email = ?",
+                (1 if enabled else 0, address),
+            )
+            conn.commit()
+        return cursor.rowcount > 0
 
     # -- sessions -------------------------------------------------------
 

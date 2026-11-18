@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from gridtrade.api.admin import AdminAuth
 from gridtrade.api.google_auth import (
     DEVICE_CODE_URL,
     TOKEN_URL,
@@ -125,3 +126,18 @@ def test_unverified_email_is_rejected(tmp_path: Path) -> None:
     result = flow.poll(started["flow_id"])
     assert result["status"] == "error"
     assert "验证" in result["error"]
+
+
+def test_admin_flag_and_google_admin_session(tmp_path: Path) -> None:
+    store = GoogleAuthStore(tmp_path / "auth.db")
+    store.add_user("Admin@Example.com", "Admin", "admin", is_admin=True)
+    assert store.is_admin("admin@example.com") is True
+    assert store.is_allowed("admin@example.com") is True
+    store.set_admin("admin@example.com", False)
+    assert store.is_admin("admin@example.com") is False
+
+    auth = AdminAuth(tmp_path / "admin.db")
+    token = auth.grant("admin@example.com")
+    assert auth.check(token) is True
+    auth.logout(token)
+    assert auth.check(token) is False

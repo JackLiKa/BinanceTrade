@@ -15,10 +15,10 @@
 | 代码量 | Python `src/gridtrade` 约 5,400 行；前端 `web/src` 约 7,100 行；`MainActivity.java` 538 行 |
 | 页面 | **12 条 hash 路由** + 独立管理后台 `/admin` + Swagger `/api/docs` + `/ws` |
 | 接口 | **46 个路由装饰器** = 45 条 HTTP（43 进 OpenAPI：44 path / 45 operation）+ 1 条 WebSocket |
-| 测试 | pytest **159 项**（含 Google 登录/设备流 5 项；POSIX 全绿） |
+| 测试 | pytest **160 项**（含 Google 登录/设备流/后台权限 6 项；POSIX 全绿） |
 | 线上 | `http://81.71.71.131:8000`（**明文 HTTP**），令牌在服务器 `var/token` |
 | 实盘 | Gate USDT 永续**只读分析可用**；下单代码完备但**默认锁定**（未启用 409 / 未解锁 403） |
-| 认证 | 静态面板令牌 **或** Google 白名单会话（30 天 Cookie）；后台另有 `admin` 密码 |
+| 认证 | 面板：静态令牌 **或** Google 白名单会话；后台：Google（需“后台”标记）或 `admin` 密码 |
 | 最大风险 | 明文 HTTP + 默认后台密码 `admin/admin`；Google 登录需东京中继 |
 | 最重要结论 | GOOGLUSDT 分钟级网格**没有可部署正期望**（见 [09](09-策略研究结论.md)）——别再试 |
 
@@ -170,7 +170,7 @@ src/gridtrade/          # 领域、策略、执行、风控、研究、API（api
 web/                    # React 19 + Vite 6 + Tailwind 4 SPA；public/admin/index.html 是后台页
 apk/                    # 无 Gradle 的 Android 构建：manifest、单 Activity、build.sh、预编译 apk
 research/               # fetch.py（抓数据）、backtest.py（旧版脚本，仅历史参考）
-tests/                  # 12 个 pytest 文件 + conftest.py（159 项）
+tests/                  # 12 个 pytest 文件 + conftest.py（160 项）
 docs/screens/           # 14 张验收截图
 docs/memory/            # 本文档集（入口就是本文件）
 var/                    # 运行期：三个 SQLite + token（不入库）

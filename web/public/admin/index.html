@@ -59,6 +59,16 @@
       .user-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
         padding: 6px 0; border-bottom: 1px solid var(--line); font-family: ui-monospace, monospace; }
       .user-row button { height: 26px; padding: 0 8px; font-size: 11px; color: var(--down); }
+      .google-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+        height: 40px; font-size: 13px; }
+      .gicon { width: 17px; height: 17px; flex: 0 0 auto; }
+      .login-divider { display: flex; align-items: center; gap: 8px; color: var(--faint);
+        font-size: 10.5px; margin: 14px 0 8px; }
+      .login-divider::before, .login-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+      .admin-tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px;
+        background: rgba(252,213,53,.12); color: var(--accent); font-family: -apple-system, sans-serif;
+        font-size: 9.5px; line-height: 16px; vertical-align: middle; }
+      .user-row .role-btn { color: var(--muted); }
       .admin-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 18px; align-items: start; }
       .menu { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 4px;
         background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
@@ -81,8 +91,24 @@
       <section id="loginView" class="login hidden">
         <div class="card">
           <div class="brand"><b>GRIDTRADE</b><h1>管理后台</h1></div>
-          <p class="hint">默认账号/密码：<span class="mono">admin / admin</span>（首次登录后请修改密码）。</p>
+          <p class="hint">优先使用被授予后台权限的 Google 账号登录；管理员密码作为备用。</p>
           <div id="loginError" class="banner err hidden"></div>
+          <button type="button" id="adminGoogleBtn" class="primary google-btn hidden">
+            <svg class="gicon" viewBox="0 0 48 48" aria-hidden="true">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            </svg>
+            使用 Google 账号登录
+          </button>
+          <div id="adminGoogleFlow" class="hidden" style="margin-top:12px">
+            <p class="hint" style="margin-bottom:8px">在打开的 Google 页面输入下面的授权码。</p>
+            <div class="mono" id="adminGoogleCode" style="font-size:20px;letter-spacing:.16em;color:var(--accent);padding:8px 0"></div>
+            <a id="adminGoogleLink" href="https://www.google.com/device" target="_blank" rel="noreferrer noopener">打开 Google 授权页</a>
+            <p class="faint" id="adminGoogleState" style="font-size:10.5px">等待授权…</p>
+          </div>
+          <div class="login-divider">或使用管理员密码</div>
           <label><span>账号</span><input id="username" type="text" autocomplete="username" value="admin" /></label>
           <label><span>密码</span><input id="password" type="password" autocomplete="current-password" /></label>
           <div class="actions"><button class="primary" id="loginBtn">登录</button></div>
@@ -179,6 +205,7 @@
             <label><span>新增邮箱</span><input id="googleNewEmail" type="text" placeholder="you@gmail.com" autocomplete="off" /></label>
             <div class="actions" style="align-items:end"><button class="primary" id="addGoogleUserBtn">添加</button></div>
           </div>
+          <label class="switch" style="margin:0 0 12px"><input id="googleNewAdmin" type="checkbox" /><span style="margin:0">同时允许登录管理后台</span></label>
           <div id="googleUsers"></div>
         </div>
 
@@ -233,6 +260,71 @@
       };
       const showLogin = () => { $('loginView').classList.remove('hidden'); $('appView').classList.add('hidden'); };
       const showApp = () => { $('loginView').classList.add('hidden'); $('appView').classList.remove('hidden'); };
+
+      let adminFlow = null;
+      let adminFlowTimer = 0;
+
+      const setLoginError = (message) => {
+        if (!message) { $('loginError').classList.add('hidden'); return; }
+        $('loginError').textContent = message;
+        $('loginError').classList.remove('hidden');
+      };
+
+      const pollAdminGoogle = async () => {
+        if (!adminFlow) return;
+        try {
+          const result = await api('/api/admin/google/poll', {
+            method: 'POST', body: JSON.stringify({ flow_id: adminFlow.flow_id }),
+          });
+          if (result.status === 'ok') {
+            adminFlow = null;
+            $('adminGoogleFlow').classList.add('hidden');
+            setLoginError('');
+            await boot();
+            toast('已使用 Google 登录：' + result.email);
+            return;
+          }
+          if (result.status === 'pending') {
+            adminFlowTimer = window.setTimeout(pollAdminGoogle, Math.max(5, result.interval || adminFlow.interval) * 1000);
+            return;
+          }
+          adminFlow = null;
+          $('adminGoogleFlow').classList.add('hidden');
+          setLoginError(result.error || 'Google 登录失败');
+        } catch (err) {
+          adminFlow = null;
+          $('adminGoogleFlow').classList.add('hidden');
+          setLoginError(err.message);
+        }
+      };
+
+      const startAdminGoogle = async () => {
+        setLoginError('');
+        try {
+          const started = await api('/api/admin/google/start', { method: 'POST' });
+          adminFlow = started;
+          $('adminGoogleCode').textContent = started.user_code;
+          $('adminGoogleLink').href = started.verification_url;
+          $('adminGoogleState').textContent = '等待 Google 授权…';
+          $('adminGoogleFlow').classList.remove('hidden');
+          window.open(started.verification_url, '_blank', 'noopener,noreferrer');
+          window.clearTimeout(adminFlowTimer);
+          adminFlowTimer = window.setTimeout(pollAdminGoogle, Math.max(5, started.interval) * 1000);
+        } catch (err) {
+          setLoginError(err.message);
+        }
+      };
+
+      const initAdminGoogle = async () => {
+        try {
+          const providers = await api('/api/auth/providers');
+          if (!providers.google || !providers.google.enabled) return;
+          $('adminGoogleBtn').classList.remove('hidden');
+          if (!providers.google.admin_users) {
+            $('adminGoogleBtn').title = '还没有被授予后台权限的 Google 账号，请先用管理员密码登录并添加';
+          }
+        } catch (_) { /* password login still works */ }
+      };
 
       const login = async () => {
         try {
@@ -332,7 +424,7 @@
             : '未配置 Client ID/Secret，Google 登录不可用';
         const list = data.users || [];
         $('googleUsers').innerHTML = list.length
-          ? list.map((user) => `<div class="user-row"><span>${user.email}${user.name ? ' · ' + user.name : ''}</span><button data-email="${user.email}">移除</button></div>`).join('')
+          ? list.map((user) => `<div class="user-row"><span>${user.email}${user.name ? ' · ' + user.name : ''}${user.is_admin ? '<b class="admin-tag">后台</b>' : ''}</span><span><button class="role-btn" data-role="${user.email}" data-admin="${user.is_admin ? '1' : '0'}">${user.is_admin ? '取消后台' : '设为后台'}</button><button data-email="${user.email}">移除</button></span></div>`).join('')
           : '<p class="faint" style="font-size:11px;margin:6px 0">还没有允许账号。</p>';
         [...document.querySelectorAll('#googleUsers button[data-email]')].forEach((button) => {
           button.onclick = async () => {
@@ -340,6 +432,19 @@
             try {
               await api('/api/admin/google/users?email=' + encodeURIComponent(button.dataset.email), { method: 'DELETE' });
               toast('已移除 ' + button.dataset.email);
+              await loadGoogle();
+            } catch (err) { toast(err.message, 'err'); }
+          };
+        });
+        [...document.querySelectorAll('#googleUsers button[data-role]')].forEach((button) => {
+          button.onclick = async () => {
+            const makeAdmin = button.dataset.admin === '0';
+            try {
+              await api('/api/admin/google/users', {
+                method: 'PATCH',
+                body: JSON.stringify({ email: button.dataset.role, is_admin: makeAdmin }),
+              });
+              toast(makeAdmin ? '已授予后台权限' : '已取消后台权限');
               await loadGoogle();
             } catch (err) { toast(err.message, 'err'); }
           };
@@ -372,8 +477,12 @@
         const email = $('googleNewEmail').value.trim();
         if (!email) return;
         try {
-          await api('/api/admin/google/users', { method: 'POST', body: JSON.stringify({ email }) });
+          await api('/api/admin/google/users', {
+            method: 'POST',
+            body: JSON.stringify({ email, is_admin: $('googleNewAdmin').checked }),
+          });
           $('googleNewEmail').value = '';
+          $('googleNewAdmin').checked = false;
           toast('已添加 ' + email);
           await loadGoogle();
         } catch (err) { toast(err.message, 'err'); }
@@ -448,6 +557,7 @@
       };
 
       $('loginBtn').onclick = login;
+      $('adminGoogleBtn').onclick = startAdminGoogle;
       $('password').onkeydown = (event) => { if (event.key === 'Enter') login(); };
       $('logoutBtn').onclick = async () => { try { await api('/api/admin/logout', { method: 'POST' }); } catch (_) {} showLogin(); };
       $('refreshBtn').onclick = loadOverview;
@@ -477,6 +587,7 @@
         }
       });
 
+      initAdminGoogle();
       boot();
       setInterval(() => { if (!$('appView').classList.contains('hidden')) loadOverview(); }, 15000);
     </script>

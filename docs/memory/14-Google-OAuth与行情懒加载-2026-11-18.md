@@ -106,7 +106,15 @@ GRIDTRADE_GOOGLE_RELAY_TOKEN=请替换为随机串
 6. 若 OAuth consent screen 仍是 **Testing**，必须把允许账号加入 **Test users**（否则 Google 会拒绝）。
 7. 手机/电脑打开面板 → “使用 Google 账号登录” → 在 Google 页面输入 code。
 
-### 2.6 APK v0.3.0
+### 2.6 管理后台也使用 Google 登录（2026-11-18）
+
+- `/admin` 登录页新增官方 Google G 按钮：`POST /api/admin/google/start|poll`，成功后设置 `gt_admin` Cookie（12h）。
+- 只有 `google_users.is_admin=1` 的账号才能进后台；普通面板白名单账号不能进。
+- `/admin#/google` 的账号列表增加“后台”标记与“设为后台/取消后台”按钮；新增账号时可勾选“同时允许登录管理后台”。
+- 管理员密码 `admin/admin` 保留为备用，防止 Google/中继故障锁死后台。
+- 仍建议改默认密码 + 上 HTTPS。
+
+### 2.7 APK v0.3.0
 - `apk/build.sh` 默认 `VERSION_CODE=4 / VERSION_NAME=0.3.0`；manifest 同步。
 - **不再内嵌面板令牌**（`apk/.env` 的 `TOKEN=` 留空），首次打开显示 Google 登录页；令牌登录仍可在“使用访问令牌登录”里使用。
 - `MainActivity` 新增 `onCreateWindow`：`target=_blank` 的 Google 授权页交给系统浏览器；

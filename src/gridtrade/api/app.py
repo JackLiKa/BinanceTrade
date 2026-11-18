@@ -177,6 +177,12 @@ class AdminGoogleConfig(BaseModel):
 class AdminGoogleUser(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     name: str = Field("", max_length=120)
+    is_admin: bool = False
+
+
+class AdminGoogleRole(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    is_admin: bool
 
 
 class KillSwitchRequest(BaseModel):
@@ -429,6 +435,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "configured": config.configured,
                 "device_flow": True,
                 "users": len(google_store.list_users()),
+                "admin_users": len([user for user in google_store.list_users() if user.get("is_admin")]),
             }
         }
 
@@ -660,6 +667,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # -- risk, settings, audit -------------------------------------------
 
     # -- standalone admin console -----------------------------------------
+
+    @app.post("/api/admin/google/start", tags=["admin"])
+    async def admin_google_start() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(google_flow.start)
+        except GoogleAuthError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    @app.post("/api/admin/google/poll", tags=["admin"])
+    async def admin_google_poll(payload: GooglePollRequest, response: Response) -> dict[str, Any]:
+        try:
+            result = await asyncio.to_thread(google_flow.poll, payload.flow_id)
+        except GoogleAuthError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        panel_token = result.pop("session_token", "")
+        if result.get("status") != "ok":
+            return result
+        email = str(result.get("email") or "")
+        if panel_token:
+            google_store.revoke_session(panel_token)
+        if not google_store.is_admin(email):
+            return {"status": "not_allowed", "email": email, "error": "该 Google 账号未被授予后台权限"}
+        admin_token = admin_service.auth.grant(email)
+        response.set_cookie(
+            ADMIN_COOKIE,
+            admin_token,
+            max_age=SESSION_TTL,
+            httponly=True,
+            samesite="strict",
+            secure=settings.secure_cookie,
+            path="/",
+        )
+        store.audit("admin.google_login", email, actor="admin")
+        return {"status": "ok", "email": email, "name": result.get("name", "")}
 
     @app.post("/api/admin/login", tags=["admin"])
     async def admin_login(payload: AdminLoginRequest, request: Request, response: Response) -> dict[str, Any]:
@@ -1053,11 +1094,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/admin/google/users", dependencies=admin_guarded)
     async def admin_google_add_user(payload: AdminGoogleUser) -> dict[str, Any]:
         try:
-            user = await asyncio.to_thread(google_store.add_user, payload.email, payload.name, "admin")
+            user = await asyncio.to_thread(
+                google_store.add_user,
+                payload.email,
+                payload.name,
+                "admin",
+                payload.is_admin,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         store.audit("admin.google_user_add", user["email"], actor="admin")
         return {"user": user}
+
+    @app.patch("/api/admin/google/users", dependencies=admin_guarded)
+    async def admin_google_set_role(payload: AdminGoogleRole) -> dict[str, Any]:
+        ok = await asyncio.to_thread(google_store.set_admin, payload.email, payload.is_admin)
+        if not ok:
+            raise HTTPException(status_code=404, detail="账号不存在")
+        store.audit(
+            "admin.google_user_role",
+            f"{payload.email.lower()}={'admin' if payload.is_admin else 'panel'}",
+            actor="admin",
+        )
+        return {"ok": True, "email": payload.email.lower(), "is_admin": payload.is_admin}
 
     @app.delete("/api/admin/google/users", dependencies=admin_guarded)
     async def admin_google_remove_user(email: str = Query(..., min_length=3, max_length=254)) -> dict[str, Any]:

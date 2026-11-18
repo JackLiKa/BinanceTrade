@@ -116,6 +116,13 @@ class AdminAuth:
             self._sessions[token] = now + SESSION_TTL
             return token
 
+    def grant(self, email: str) -> str:
+        """Create an admin session after a successful Google login."""
+        token = secrets.token_urlsafe(32)
+        with self._lock:
+            self._sessions[token] = time.time() + SESSION_TTL
+        return token
+
     def check(self, token: str | None) -> bool:
         if not token:
             return False
