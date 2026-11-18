@@ -114,6 +114,14 @@ function StatBlock({ artifact }: { artifact: ReplayArtifact }) {
         tone={summary.funding <= 0 ? 1 : -1}
         sub="正数为支出"
       />
+      {summary.liquidation_price != null ? (
+        <Stat
+          label="强平价"
+          value={`$${fmtMoney(Number(summary.liquidation_price), 4)}`}
+          sub={summary.liquidation_time ? `强平于 ${fmtDateTimeLocal(String(summary.liquidation_time))}` : '已触发强平'}
+          tone={-1}
+        />
+      ) : null}
     </div>
   )
 }
@@ -204,7 +212,13 @@ function ReplayView({ artifact }: { artifact: ReplayArtifact }) {
           hint={`${fmtDate(artifact.meta.start)} → ${fmtDate(artifact.meta.end)} · ${artifact.meta.bars.toLocaleString()} 根 K 线 · ${fmtDuration(artifact.meta.duration_s)}`}
           right={
             <div className="flex items-center gap-2">
-              {artifact.summary.halted ? <Badge tone="down">已停止</Badge> : <Badge tone="up">已完成</Badge>}
+              {artifact.summary.liquidated ? (
+                <Badge tone="down">已爆仓强平</Badge>
+              ) : artifact.summary.halted ? (
+                <Badge tone="down">已停止</Badge>
+              ) : (
+                <Badge tone="up">已完成</Badge>
+              )}
               <Badge tone="neutral">{fmtQty(artifact.summary.final_position ?? 0, 4)} 期末持仓</Badge>
             </div>
           }

@@ -97,6 +97,8 @@ class ResearchRequest(BaseModel):
     taker_fee: float = Field(0.0005, ge=0, le=0.01)
     slip_bp: float = Field(0.2, ge=0, le=100)
     intrabar: bool = False
+    liquidation_enabled: bool = True
+    liquidation_fee: float = Field(0.005, ge=0, le=0.05)
 
     @model_validator(mode="after")
     def _range(self) -> ResearchRequest:
@@ -116,6 +118,8 @@ class ResearchRequest(BaseModel):
             taker_fee=self.taker_fee,
             slip_bp=self.slip_bp,
             intrabar=self.intrabar,
+            liquidation_enabled=self.liquidation_enabled,
+            liquidation_fee=self.liquidation_fee,
         )
 
     def stored(self) -> dict[str, Any]:

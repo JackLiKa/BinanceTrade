@@ -15,7 +15,7 @@
 | 代码量 | Python `src/gridtrade` 约 5,400 行；前端 `web/src` 约 7,100 行；`MainActivity.java` 538 行 |
 | 页面 | **12 条 hash 路由** + 独立管理后台 `/admin` + Swagger `/api/docs` + `/ws` |
 | 接口 | **46 个路由装饰器** = 45 条 HTTP（43 进 OpenAPI：44 path / 45 operation）+ 1 条 WebSocket |
-| 测试 | pytest **166 项**（含 Google 标准/设备流/后台权限 8 项；POSIX 全绿） |
+| 测试 | pytest **174 项**（含 Google 标准/设备流/后台权限 8 项；POSIX 全绿） |
 | 线上 | **https://gt.jacklika.com**（Cloudflare Tunnel + HTTPS）；8000 已关闭 |
 | 实盘 | Gate USDT 永续**只读分析可用**；下单代码完备但**默认锁定**（未启用 409 / 未解锁 403） |
 | 认证 | 面板：静态令牌 **或** Google 白名单会话；后台：Google（需“后台”标记）或 `admin` 密码 |
@@ -45,6 +45,7 @@
 | 15 | [15 HTTPS 域名与标准 Google OAuth](15-HTTPS与标准Google-OAuth-2026-11-18.md) | `jacklika.com` + Cloudflare Tunnel、账号选择页、Web/Admin/APK 深链 | 维护域名/隧道/登录的人 |
 | 16 | [16 移除 Gate 凭据与 Binance-only](16-移除Gate凭据与Binance-only-2026-11-18.md) | Gate Key 移除、实盘/Binance 页面、模拟盘切 Binance 节点 | 维护交易数据源的人 |
 | 17 | [17 TradingWorkstation 登录网关](17-TradingWorkstation登录网关-2026-11-18.md) | tw 子域账号密码/Gmail 登录、首次创建密码、nginx 鉴权 | 维护 tw 登录的人 |
+| 18 | [18 Binance 式爆仓引擎](18-Binance式爆仓引擎-2026-11-18.md) | 维持保证金/强平价/强平费、回测与模拟盘接入 | 维护回测与风控的人 |
 | — | [vault/ 原始笔记索引](vault/README.md) | 19 篇 DSH 原始笔记的逐篇索引、主题聚类、冲突与缺口 | 想追溯第一手记录的人 |
 
 > 每篇文档头部都有 **用途 / 读者 / 最后核实 / 相关文档 / 可信度** 五元组。可信度：**A** = 已对照当前代码或本机实测；**B** = 历史笔记，未复核；**C** = 需设备/服务器才能复现。
@@ -173,7 +174,7 @@ src/gridtrade/          # 领域、策略、执行、风控、研究、API（api
 web/                    # React 19 + Vite 6 + Tailwind 4 SPA；public/admin/index.html 是后台页
 apk/                    # 无 Gradle 的 Android 构建：manifest、单 Activity、build.sh、预编译 apk
 research/               # fetch.py（抓数据）、backtest.py（旧版脚本，仅历史参考）
-tests/                  # 13 个 pytest 文件 + conftest.py（165 项）
+tests/                  # 14 个 pytest 文件 + conftest.py（174 项）
 docs/screens/           # 14 张验收截图
 docs/memory/            # 本文档集（入口就是本文件）
 var/                    # 运行期：三个 SQLite + token（不入库）

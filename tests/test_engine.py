@@ -118,3 +118,25 @@ def test_zero_drift_gbm_is_not_a_money_printer():
     assert mean < 5.0
     assert max(returns) < 10.0
     assert min(returns) > -20.0
+
+
+def test_liquidation_engine_stops_before_negative_equity():
+    rows = []
+    price = 100.0
+    for _ in range(600):
+        previous = price
+        price *= 0.999
+        rows.append((previous, previous * 1.0005, price * 0.9995, price))
+
+    result = run(
+        rows,
+        params=GridParams(50.0, 10, 5.0),
+        config=BacktestConfig(capital=100.0, stop_dd=None),
+    )
+
+    assert result.stats["liquidated"] is True
+    assert result.liquidation is not None
+    assert result.stats["liquidation_price"] is not None
+    assert result.stats["max_dd"] <= 100.0
+    assert result.stats["final_equity"] >= 0.0
+    assert result.final_position == pytest.approx(0.0)

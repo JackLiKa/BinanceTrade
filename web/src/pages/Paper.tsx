@@ -204,7 +204,7 @@ export function Paper() {
           <Stat
             label="总名义 / 保证金"
             value={`$${fmtMoney(account.gross_notional, 0)}`}
-            sub={`保证金 $${fmtMoney(account.margin_used, 2)} · ${account.leverage}x`}
+            sub={`维持保证金 $${fmtMoney(account.maintenance_margin ?? 0, 2)} · ${fmtMoney((account.margin_ratio ?? 0) * 100, 2)}%`}
           />
           <Stat
             label="成本"
@@ -212,6 +212,13 @@ export function Paper() {
             sub={`手续费 ${fmtMoney(account.fees, 3)} · 资金费 ${fmtMoney(account.funding, 3)} · 滑点 ${fmtMoney(account.slippage ?? 0, 3)}`}
           />
         </div>
+        {data.liquidation ? (
+          <ErrorNote>
+            已触发 Binance 式爆仓强平：权益 ${fmtMoney(data.liquidation.equity_before, 2)} ≤ 维持保证金 $
+            {fmtMoney(data.liquidation.maintenance_margin, 2)}；强平费 ${fmtMoney(data.liquidation.liquidation_fee, 3)}，
+            坏账 ${fmtMoney(data.liquidation.bad_debt, 2)}。
+          </ErrorNote>
+        ) : null}
         {data.cost ? (
           <div className="mt-3 rounded-lg border border-line-soft bg-elevated/40 px-3 py-2 text-[11px] text-muted">
             成本模型：maker 往返 <span className="font-mono text-ink">{fmtMoney(data.cost.round_trip_maker_bp ?? 0, 2)} bp</span>

@@ -23,6 +23,7 @@ from typing import Any, Protocol
 import httpx
 
 from ..strategy.costs import CostModel
+from ..risk.liquidation import maintenance_margin
 from .config import PaperConfig
 
 _EPS = 1e-9
@@ -351,6 +352,9 @@ class PaperEngine:
         self.last_error: str | None = None
         self.equity = config.capital
         self.gross = 0.0
+        self.liquidation: dict[str, Any] | None = None
+        self.wallet_balance = config.capital
+        self.maintenance_margin = 0.0
         self._init_db()
         self._load()
 
@@ -504,7 +508,10 @@ class PaperEngine:
             self._mark_equity()
             self._settle_funding(now)
             self._mark_equity()
-            self._check_stop()
+            self._update_margin()
+            self._check_liquidation(now)
+            if self.status == "running":
+                self._check_stop()
             self._save()
             self._snapshot_if_due(now)
 
@@ -654,6 +661,71 @@ class PaperEngine:
         self.equity = self.account.cash + unrealized
         self.account.peak_equity = max(self.account.peak_equity, self.equity)
 
+    def _update_margin(self) -> None:
+        wallet = self.account.cash
+        maintenance = 0.0
+        for state in self.state.values():
+            if abs(state.position) <= _EPS:
+                continue
+            wallet += state.position * state.avg_entry
+            maintenance += maintenance_margin(abs(state.position) * state.mark)
+        self.wallet_balance = wallet
+        self.maintenance_margin = maintenance
+
+    def _check_liquidation(self, now: float) -> None:
+        """Binance-style cross-margin liquidation for the shared paper account."""
+        if self.status != "running" or self.maintenance_margin <= 0:
+            return
+        if self.equity > self.maintenance_margin + 1e-9:
+            return
+        positions = [state for state in self.state.values() if abs(state.position) > _EPS]
+        if not positions:
+            return
+        equity_before = self.equity
+        maintenance = self.maintenance_margin
+        positions_snapshot = [
+            {
+                "symbol": state.symbol,
+                "qty": round(state.position, 12),
+                "mark": state.mark,
+                "avg_entry": state.avg_entry,
+            }
+            for state in positions
+        ]
+        fees = 0.0
+        for state in positions:
+            qty = abs(state.position)
+            notional = qty * state.mark
+            side = "SELL" if state.position > 0 else "BUY"
+            self._fill(state, side, state.mark, qty, self._taker_rate(state), "liquidation", now)
+            fee = notional * max(0.0, self.config.liquidation_fee_bp) / 1e4
+            self.account.cash -= fee
+            self.account.fees += fee
+            fees += fee
+        bad_debt = max(0.0, -self.account.cash)
+        if self.account.cash < 0:
+            self.account.cash = 0.0
+        self._mark_equity()
+        self.liquidation = {
+            "ts": _iso(now),
+            "reason": "maintenance_margin",
+            "equity_before": round(equity_before, 6),
+            "maintenance_margin": round(maintenance, 6),
+            "cash_after": round(self.account.cash, 6),
+            "bad_debt": round(bad_debt, 6),
+            "liquidation_fee": round(fees, 6),
+            "positions": positions_snapshot,
+        }
+        self.status = "halted"
+        self.last_error = (
+            f"爆仓强平：权益 ${equity_before:.2f} <= 维持保证金 ${maintenance:.2f}；"
+            f"强平费 ${fees:.2f}，坏账 ${bad_debt:.2f}"
+        )
+        self._mark_equity()
+        self._stop.set()
+        self._archive_run("liquidation")
+        self._save()
+
     def _check_stop(self) -> None:
         limit = self.config.stop_dd_pct
         account = self.account
@@ -747,6 +819,9 @@ class PaperEngine:
         self.account = PortfolioAccount(cash=float(cfg.capital), peak_equity=float(cfg.capital))
         self.equity = float(cfg.capital)
         self.gross = 0.0
+        self.liquidation = None
+        self.wallet_balance = float(cfg.capital)
+        self.maintenance_margin = 0.0
         self.started_at = _iso(time.time())
         self.last_error = None
         self.last_tick_at = _iso(time.time())
@@ -1063,6 +1138,13 @@ class PaperEngine:
             account = self.account
             equity = float(getattr(self, "equity", account.cash))
             unrealized = sum(state.unrealized for state in self.state.values())
+            wallet = account.cash + sum(state.position * state.avg_entry for state in self.state.values())
+            maintenance = sum(
+                maintenance_margin(abs(state.position) * state.mark)
+                for state in self.state.values()
+                if abs(state.position) > _EPS
+            )
+            margin_ratio = maintenance / equity if equity > 0 else None
             drawdown = 0.0
             if account.peak_equity > 0:
                 drawdown = (account.peak_equity - equity) / account.peak_equity * 100
@@ -1130,6 +1212,10 @@ class PaperEngine:
                     "slippage": account.slippage,
                     "gross_notional": self.gross,
                     "margin_used": self.gross / max(1.0, self.config.leverage),
+                    "wallet_balance": wallet,
+                    "maintenance_margin": maintenance,
+                    "margin_ratio": margin_ratio,
+                    "liquidation_fee_bp": self.config.liquidation_fee_bp,
                     "leverage": self.config.leverage,
                     "peak_equity": account.peak_equity,
                     "drawdown_pct": drawdown,
@@ -1138,6 +1224,7 @@ class PaperEngine:
                     else 0.0,
                 },
                 "portfolio": portfolio,
+                "liquidation": self.liquidation,
                 "fills": fills,
                 "funding": funding,
                 "equity": equity_rows,

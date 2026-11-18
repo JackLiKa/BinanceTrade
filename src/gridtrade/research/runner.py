@@ -28,6 +28,8 @@ class ResearchParams:
     taker_fee: float = 0.0005
     slip_bp: float = 0.2
     intrabar: bool = False
+    liquidation_enabled: bool = True
+    liquidation_fee: float = 0.005
 
     def grid_params(self) -> GridParams:
         return GridParams(
@@ -45,6 +47,8 @@ class ResearchParams:
             slip_bp=self.slip_bp,
             intrabar=self.intrabar,
             stop_dd=self.stop_dd,
+            liquidation_enabled=self.liquidation_enabled,
+            liquidation_fee=self.liquidation_fee,
         )
 
 
@@ -108,6 +112,7 @@ def walkforward(
                 "fees": result.stats["fees"],
                 "funding": result.stats["funding"],
                 "halted": result.stats["halted"],
+                "liquidated": result.stats.get("liquidated", False),
             }
         )
         if progress is not None:
@@ -176,6 +181,7 @@ def sweep(
                 "fees": result.stats["fees"],
                 "funding": result.stats["funding"],
                 "halted": result.stats["halted"],
+                "liquidated": result.stats.get("liquidated", False),
             }
         )
         if progress is not None:

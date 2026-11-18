@@ -203,12 +203,26 @@ export interface PaperState {
     slippage: number
     gross_notional: number
     margin_used: number
+    wallet_balance?: number
+    maintenance_margin?: number
+    margin_ratio?: number | null
+    liquidation_fee_bp?: number
     leverage: number
     peak_equity: number
     drawdown_pct: number
     return_pct: number
   }
   portfolio: PaperSymbolView[]
+  liquidation?: {
+    ts: string
+    reason: string
+    equity_before: number
+    maintenance_margin: number
+    cash_after: number
+    bad_debt: number
+    liquidation_fee: number
+    positions: Array<{ symbol: string; qty: number; mark: number; avg_entry: number }>
+  } | null
   fills: PaperFill[]
   funding: PaperFunding[]
   equity: Array<[string, number]>
@@ -509,6 +523,10 @@ export interface ReplaySummary {
   turnover_x?: number
   avg_inventory_pct?: number
   halted: boolean
+  liquidated?: boolean
+  liquidation_price?: number | null
+  liquidation_time?: string | null
+  liquidation?: Record<string, string | number> | null
   final_position?: number
   bars?: number
   start?: string

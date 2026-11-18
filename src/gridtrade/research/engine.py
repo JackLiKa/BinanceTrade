@@ -32,6 +32,8 @@ class BacktestConfig:
     slip_bp: float = 0.2
     intrabar: bool = False
     stop_dd: float | None = 0.10
+    liquidation_enabled: bool = True
+    liquidation_fee: float = 0.005
 
 
 @dataclass
@@ -46,6 +48,7 @@ class BacktestResult:
     final_position: float = 0.0
     strategy_state: dict = field(default_factory=dict)
     funding_events: list[tuple[datetime | None, float]] = field(default_factory=list)
+    liquidation: dict | None = None
 
     def summary(self) -> dict:
         return {
@@ -53,6 +56,7 @@ class BacktestResult:
             "strategy": self.strategy_id,
             **self.stats,
             "final_position": round(self.final_position, 8),
+            "liquidation": self.liquidation,
             "strategy_state": self.strategy_state,
         }
 
@@ -92,6 +96,8 @@ class ReplayEngine:
             ),
             self.config.capital,
             intrabar=self.config.intrabar,
+            liquidation_enabled=self.config.liquidation_enabled,
+            liquidation_fee=self.config.liquidation_fee,
         )
         first_price = float(dataset.bars["open"].iloc[0])
         self.risk = RiskEngine(risk_limits or default_risk_limits(self.config.capital, first_price))
@@ -101,6 +107,7 @@ class ReplayEngine:
             DrawdownGuard(self.config.stop_dd) if self.config.stop_dd is not None else None
         )
         self._halted = False
+        self._liquidation: dict | None = None
 
     def run(self) -> BacktestResult:
         rows = list(self.dataset.bars.itertuples(index=False))
@@ -128,10 +135,16 @@ class ReplayEngine:
                 fi += 1
 
             self.port.match()
+            liquidation_event = self.port.check_liquidation(bar)
             self.port.end_bar()
             equity[i] = self.port.equity
             inv_notional += abs(self.port.position) * bar.close
 
+            if liquidation_event is not None:
+                self._halted = True
+                self._liquidation = liquidation_event.as_dict()
+                self.oms.cancel_group(self.strategy.group)
+                continue
             if self.guard is not None:
                 if self.guard.halted:
                     continue
@@ -157,6 +170,9 @@ class ReplayEngine:
             inv_notional_sum=inv_notional,
             bars=n,
             halted=self._halted,
+            liquidated=self.port.liquidated,
+            liquidation_price=(self._liquidation or {}).get("liquidation_price"),
+            liquidation_time=(self._liquidation or {}).get("ts"),
         )
         return BacktestResult(
             symbol=self.dataset.symbol,
@@ -169,6 +185,7 @@ class ReplayEngine:
             final_position=self.port.position,
             strategy_state=self.strategy.state(),
             funding_events=list(self.port.funding_events),
+            liquidation=self._liquidation,
         )
 
     def _halt(self, bar: Bar) -> None:

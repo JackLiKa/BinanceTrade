@@ -275,6 +275,7 @@ cp apk/.env.example apk/.env
 - [15 HTTPS 域名与标准 Google OAuth](docs/memory/15-HTTPS与标准Google-OAuth-2026-11-18.md)
 - [16 移除 Gate 凭据与 Binance-only](docs/memory/16-移除Gate凭据与Binance-only-2026-11-18.md)
 - [17 TradingWorkstation 登录网关](docs/memory/17-TradingWorkstation登录网关-2026-11-18.md)
+- [18 Binance 式爆仓引擎](docs/memory/18-Binance式爆仓引擎-2026-11-18.md)
 - [09 策略研究结论](docs/memory/09-策略研究结论.md)（**改策略前必读**）
 - [10 问题与决策记录](docs/memory/10-问题与决策记录.md)
 - [11 外部接口清单](docs/memory/11-外部接口清单.md)
@@ -288,7 +289,7 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 166 项
+.venv/bin/python -m pytest            # 174 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 

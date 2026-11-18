@@ -13,10 +13,17 @@ up bar) and is an optimistic upper bound, not the default.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 
+from ..risk.liquidation import (
+    DEFAULT_MAINTENANCE_TIERS,
+    LiquidationEvent,
+    liquidation_price,
+    maintenance_margin,
+)
 from ..domain.models import (
     Bar,
     BrokerOrder,
@@ -60,6 +67,9 @@ class SimExecution:
         *,
         intrabar: bool = False,
         max_fills_per_bar: int = 2_000,
+        maintenance_tiers=DEFAULT_MAINTENANCE_TIERS,
+        liquidation_fee: float = 0.005,
+        liquidation_enabled: bool = True,
     ) -> None:
         self.symbol = symbol
         self.filters = filters
@@ -75,6 +85,11 @@ class SimExecution:
         self.intrabar = intrabar
         self.max_fills_per_bar = max_fills_per_bar
         self.truncated_bars = 0
+        self.maintenance_tiers = tuple(maintenance_tiers)
+        self.liquidation_fee = max(0.0, float(liquidation_fee))
+        self.liquidation_enabled = bool(liquidation_enabled)
+        self.liquidated = False
+        self.liquidation: LiquidationEvent | None = None
 
         self._orders: dict[str, Order] = {}
         self._open: set[str] = set()
@@ -90,6 +105,8 @@ class SimExecution:
         self._sink = sink
 
     def submit(self, order: Order) -> SubmitAck:
+        if self.liquidated:
+            return SubmitAck(False, "account_liquidated")
         if order.type is OrderType.LIMIT and order.tif is TimeInForce.POST_ONLY:
             if order.side is Side.BUY and order.price >= self._last_price - _EPS:
                 return SubmitAck(False, "post_only_would_take")
@@ -147,6 +164,43 @@ class SimExecution:
         return self.cash + self.position * self._mark
 
     @property
+    def wallet_balance(self) -> float:
+        """Cost-basis wallet balance: initial capital + realized PnL - costs."""
+        return self.cash + self.position * self.entry_price
+
+    @property
+    def margin_balance(self) -> float:
+        """Binance margin balance = wallet balance + unrealized PnL."""
+        return self.equity
+
+    @property
+    def position_notional(self) -> float:
+        return abs(self.position) * self._mark
+
+    @property
+    def maintenance_margin(self) -> float:
+        return maintenance_margin(self.position_notional, self.maintenance_tiers)
+
+    @property
+    def margin_ratio(self) -> float:
+        if abs(self.position) <= _EPS:
+            return 0.0
+        balance = self.margin_balance
+        return self.maintenance_margin / balance if balance > 0 else math.inf
+
+    @property
+    def liquidation_price(self) -> float | None:
+        if abs(self.position) <= _EPS:
+            return None
+        return liquidation_price(
+            1 if self.position > 0 else -1,
+            abs(self.position),
+            self.entry_price,
+            self.wallet_balance,
+            self.maintenance_tiers,
+        )
+
+    @property
     def open_orders(self) -> tuple[Order, ...]:
         return tuple(self._orders[cid] for cid in self._open)
 
@@ -172,6 +226,8 @@ class SimExecution:
         return payment
 
     def match(self) -> list[Fill]:
+        if self.liquidated:
+            return []
         if self._bar is None:
             raise RuntimeError("begin_bar() must be called before match()")
         produced: list[Fill] = []
@@ -186,6 +242,100 @@ class SimExecution:
         else:
             produced.extend(self._sweep(up=self._bar.direction > 0))
         return produced
+
+    def check_liquidation(self, bar: Bar) -> LiquidationEvent | None:
+        """Force-close the position if Binance-style maintenance is breached.
+
+        The check uses the bar's extremes for the liquidation trigger (a gap
+        through the liquidation price fills at the bar open, never at the
+        better liquidation price) and also checks the bar close so a slow
+        bleed is caught even if neither extreme is touched.
+        """
+        if not self.liquidation_enabled or self.liquidated or abs(self.position) <= _EPS:
+            return None
+        lp = self.liquidation_price
+        if lp is None or lp <= 0:
+            return None
+        mark = self._mark
+        if mark <= 0:
+            return None
+        long = self.position > 0
+        fill_price: float | None = None
+        reason = "maintenance_margin"
+        if long:
+            if bar.open <= lp:
+                fill_price, reason = bar.open, "gap_through_liquidation"
+            elif bar.low <= lp:
+                fill_price = lp
+            elif bar.close <= lp:
+                fill_price = bar.close
+        else:
+            if bar.open >= lp:
+                fill_price, reason = bar.open, "gap_through_liquidation"
+            elif bar.high >= lp:
+                fill_price = lp
+            elif bar.close >= lp:
+                fill_price = bar.close
+        close_mark = bar.close if bar.close > 0 else mark
+        wallet = self.wallet_balance
+        close_margin_balance = wallet + self.position * (close_mark - self.entry_price)
+        close_maintenance = maintenance_margin(abs(self.position) * close_mark, self.maintenance_tiers)
+        if fill_price is None and close_margin_balance <= close_maintenance + 1e-9:
+            fill_price, reason = close_mark, "maintenance_margin"
+        if fill_price is None:
+            return None
+        return self._liquidate(fill_price, bar.close_time, reason)
+
+    def _liquidate(self, fill_price: float, ts, reason: str) -> LiquidationEvent:
+        qty = abs(self.position)
+        entry = self.entry_price
+        wallet = self.wallet_balance
+        notional = qty * fill_price
+        fee = notional * self.liquidation_fee
+        pnl = self.position * (fill_price - entry)
+        cash_after = wallet + pnl - fee
+        bad_debt = max(0.0, -cash_after)
+        event = LiquidationEvent(
+            ts=ts,
+            symbol=self.symbol,
+            side="LONG" if self.position > 0 else "SHORT",
+            qty=qty,
+            entry_price=entry,
+            liquidation_price=float(self.liquidation_price or fill_price),
+            fill_price=fill_price,
+            wallet_balance=wallet,
+            maintenance_margin=maintenance_margin(notional, self.maintenance_tiers),
+            margin_balance=wallet + pnl,
+            fee=fee,
+            bad_debt=bad_debt,
+            reason=reason,
+        )
+        self.cancel_group("")
+        for cid in list(self._open):
+            self.cancel(cid)
+        self._pending_market.clear()
+        self.position = 0.0
+        self.entry_price = 0.0
+        self.cash = max(0.0, cash_after)
+        self.fees_paid += fee
+        self._last_price = fill_price
+        self._mark = fill_price
+        self.liquidated = True
+        self.liquidation = event
+        self.fills.append(
+            Fill(
+                client_id="liquidation",
+                symbol=self.symbol,
+                side=Side.SELL if event.side == "LONG" else Side.BUY,
+                qty=qty,
+                price=fill_price,
+                fee=fee,
+                ts=ts,
+                tag="liquidation",
+                liquidity="TAKER",
+            )
+        )
+        return event
 
     def end_bar(self) -> None:
         if self._bar is None:

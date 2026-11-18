@@ -17,6 +17,9 @@ def compute_stats(
     inv_notional_sum: float,
     bars: int,
     halted: bool,
+    liquidated: bool = False,
+    liquidation_price: float | None = None,
+    liquidation_time: str | None = None,
 ) -> dict:
     if len(equity) == 0:
         return {"total_return": 0.0, "ann_return": 0.0, "max_dd": 0.0, "sharpe": 0.0}
@@ -28,7 +31,9 @@ def compute_stats(
     ann = (1.0 + total) ** (1.0 / years) - 1.0 if total > -1.0 else -1.0
 
     peak = equity.cummax()
-    max_dd = float((1.0 - equity / peak).max())
+    # A margin account can never lose more than 100%: the liquidation engine
+    # closes it at/before zero.  Clamp here as a second line of defence.
+    max_dd = min(1.0, float((1.0 - equity / peak).max()))
 
     daily = equity.resample("1D").last().dropna()
     dret = daily.pct_change().dropna()
@@ -49,4 +54,7 @@ def compute_stats(
         "turnover_x": round(turnover / capital, 2),
         "avg_inventory_pct": round(inv_notional_sum / max(bars, 1) / capital * 100, 2),
         "halted": bool(halted),
+        "liquidated": bool(liquidated),
+        "liquidation_price": liquidation_price,
+        "liquidation_time": liquidation_time,
     }
