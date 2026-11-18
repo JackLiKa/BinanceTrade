@@ -211,6 +211,13 @@ class Settings:
     google_relay_url: str = ""
     google_relay_token: str = ""
     public_url: str = ""
+    tw_public_url: str = "https://tw.jacklika.com"
+    tw_allowed_emails: list[str] = field(
+        default_factory=lambda: [
+            "040418jie@gmail.com",
+            "jacklika.business@gmail.com",
+        ]
+    )
     token: str = ""
     cors_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
@@ -249,6 +256,15 @@ class Settings:
             google_relay_url=os.environ.get("GRIDTRADE_GOOGLE_RELAY", "").strip(),
             google_relay_token=os.environ.get("GRIDTRADE_GOOGLE_RELAY_TOKEN", "").strip(),
             public_url=os.environ.get("GRIDTRADE_PUBLIC_URL", "").strip().rstrip("/"),
+            tw_public_url=os.environ.get("GRIDTRADE_TW_PUBLIC_URL", "https://tw.jacklika.com").strip().rstrip("/"),
+            tw_allowed_emails=[
+                item.strip().lower()
+                for item in os.environ.get(
+                    "GRIDTRADE_TW_ALLOWED_EMAILS",
+                    "040418jie@gmail.com,jacklika.business@gmail.com",
+                ).split(",")
+                if item.strip()
+            ],
             token=os.environ.get("GRIDTRADE_TOKEN", "").strip(),
             cors_origins=[o.strip() for o in origins.split(",") if o.strip()],
             paper=PaperConfig.from_env(),

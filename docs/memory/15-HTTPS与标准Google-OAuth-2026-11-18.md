@@ -31,6 +31,10 @@
 - nginx 的 `trading-workstation.conf` 增加 `absolute_redirect off;`，否则根跳转会变成 `http://`；备份已移到 `/etc/nginx/backups/`，避免被 `sites-enabled/*` 重复加载
 - 若要让根路径直接显示（URL 不带 `/TradingWorkstation`），需要改 Next.js `basePath` 并重建；当前未改
 
+## 1.2 TradingWorkstation 登录
+`https://tw.jacklika.com` 已加登录网关（账号密码 + Gmail，首次 Gmail 后创建密码），只允许两个 Gmail；
+详见 [17](17-TradingWorkstation登录网关-2026-11-18.md)。
+
 ## 2. 标准 Google OAuth（账号选择页）
 
 ### 2.1 客户端

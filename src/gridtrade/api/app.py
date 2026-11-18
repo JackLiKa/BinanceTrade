@@ -30,7 +30,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..research.runner import ResearchParams
@@ -40,6 +40,8 @@ from .binance_node import BinanceNodeClient, BinanceNodeError
 from .jobs import JobQueue
 from .live import LiveMarket
 from .admin import ADMIN_COOKIE, SESSION_TTL, AdminError, AdminService, AdminAuth
+from urllib.parse import parse_qs, quote, urlencode
+from .tw_auth import TwAuthStore, login_page, safe_next, set_password_page
 from .google_auth import (
     GoogleAuthError,
     GoogleAuthStore,
@@ -310,6 +312,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         relay_url=settings.google_relay_url,
         relay_token=settings.google_relay_token,
     )
+    tw_store = TwAuthStore(settings.var_dir / "tw_auth.db", settings.tw_allowed_emails)
     started_at = time.time()
 
     @asynccontextmanager
@@ -458,6 +461,116 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         target = "/admin" if purpose == "admin" else "/"
         return RedirectResponse(f"{target}?oauth_error={message[:180]}", status_code=302)
 
+    def set_tw_cookie(response: Response, value: str) -> None:
+        response.set_cookie(
+            "tw_session",
+            value,
+            max_age=30 * 24 * 3600,
+            httponly=True,
+            samesite="lax",
+            secure=settings.secure_cookie,
+            path="/",
+        )
+
+    async def form_fields(request: Request) -> dict[str, str]:
+        try:
+            values = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+        except UnicodeDecodeError:
+            return {}
+        return {key: value[0] for key, value in values.items() if value}
+
+    def tw_redirect(path: str) -> RedirectResponse:
+        return RedirectResponse(f"{settings.tw_public_url}{safe_next(path)}", status_code=302)
+
+    @app.get("/__tw_auth/login", response_class=HTMLResponse, include_in_schema=False)
+    async def tw_login_page(request: Request, next: str = "/TradingWorkstation") -> HTMLResponse:
+        error = request.query_params.get("error", "")
+        return HTMLResponse(login_page(next_path=next, error=error))
+
+    @app.post("/__tw_auth/login", include_in_schema=False)
+    async def tw_password_login(request: Request, response: Response) -> RedirectResponse:
+        fields = await form_fields(request)
+        email = fields.get("email", "").strip().lower()
+        password = fields.get("password", "")
+        next_path = safe_next(fields.get("next"))
+        if not tw_store.allowed_email(email) or not tw_store.verify(email, password):
+            return RedirectResponse(
+                f"/__tw_auth/login?next={urlencode({'': next_path})[1:]}&error=" + urlencode({"": "邮箱或密码错误；首次使用请先 Gmail 登录"})[1:],
+                status_code=302,
+            )
+        redirect = tw_redirect(next_path)
+        set_tw_cookie(redirect, tw_store.create_session(email))
+        return redirect
+
+    @app.get("/__tw_auth/logout", include_in_schema=False)
+    async def tw_logout(request: Request, response: Response) -> RedirectResponse:
+        tw_store.revoke(request.cookies.get("tw_session", ""))
+        redirect = RedirectResponse("/__tw_auth/login", status_code=302)
+        redirect.delete_cookie("tw_session", path="/")
+        return redirect
+
+    @app.get("/__tw_auth/check", include_in_schema=False)
+    async def tw_check(request: Request) -> Response:
+        if tw_store.session_email(request.cookies.get("tw_session", "")) is None:
+            return Response(status_code=401)
+        return Response(status_code=204)
+
+    @app.get("/__tw_auth/google/start", include_in_schema=False)
+    async def tw_google_start(request: Request, next: str = "/TradingWorkstation") -> RedirectResponse:
+        try:
+            url = await asyncio.to_thread(
+                google_web.start,
+                redirect_uri=f"{settings.public_url}/api/auth/google/callback",
+                purpose="tw",
+                next_path=safe_next(next),
+            )
+        except GoogleWebError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        return RedirectResponse(url, status_code=302)
+
+    @app.get("/__tw_auth/google/return", include_in_schema=False)
+    async def tw_google_return(request: Request, response: Response, code: str = "", next: str = "/TradingWorkstation") -> RedirectResponse:
+        pair = tw_store.consume_code(code)
+        if pair is None:
+            return RedirectResponse("/__tw_auth/login?error=" + urlencode({"": "登录码无效或已过期"})[1:], status_code=302)
+        email, target = pair
+        redirect = tw_redirect(target or next)
+        set_tw_cookie(redirect, tw_store.create_session(email))
+        return redirect
+
+    @app.get("/__tw_auth/set-password", response_class=HTMLResponse, include_in_schema=False)
+    async def tw_set_password_page(token: str = "", next: str = "/TradingWorkstation", error: str = "") -> HTMLResponse:
+        if not token:
+            return HTMLResponse(login_page(next_path=next, error="缺少设置密码凭证，请重新 Gmail 登录"))
+        return HTMLResponse(set_password_page(token=token, next_path=next, error=error))
+
+    @app.post("/__tw_auth/set-password", include_in_schema=False)
+    async def tw_set_password(request: Request, response: Response) -> RedirectResponse:
+        fields = await form_fields(request)
+        token = fields.get("token", "")
+        password = fields.get("password", "")
+        password2 = fields.get("password2", "")
+        pair = tw_store.consume_pending(token)
+        if pair is None:
+            return RedirectResponse("/__tw_auth/login?error=" + urlencode({"": "设置密码凭证已过期"})[1:], status_code=302)
+        email, target = pair
+        if len(password) < 8:
+            pending = tw_store.create_pending(email, target)
+            return RedirectResponse(
+                f"/__tw_auth/set-password?token={quote(token)}&next={quote(target)}&error=" + urlencode({"": "密码至少 8 位"})[1:],
+                status_code=302,
+            )
+        if password != password2:
+            pending = tw_store.create_pending(email, target)
+            return RedirectResponse(
+                f"/__tw_auth/set-password?token={quote(pending)}&next={quote(target)}&error=" + urlencode({"": "两次密码不一致"})[1:],
+                status_code=302,
+            )
+        tw_store.set_password(email, password)
+        redirect = tw_redirect(target)
+        set_tw_cookie(redirect, tw_store.create_session(email))
+        return redirect
+
     @app.get("/api/auth/google/web/start", tags=["auth"])
     async def google_web_start(
         request: Request,
@@ -500,6 +613,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         email = result["email"]
         purpose = result["purpose"]
         target = result.get("next") or ("/admin" if purpose == "admin" else "/")
+        if purpose == "tw":
+            if not tw_store.allowed_email(email):
+                return RedirectResponse(
+                    f"{settings.tw_public_url}/__tw_auth/login?error="
+                    + urlencode({"": f"{email} 不在允许登录名单中"})[1:],
+                    status_code=302,
+                )
+            target = safe_next(result.get("next"))
+            if not tw_store.has_password(email):
+                pending = tw_store.create_pending(email, target)
+                return RedirectResponse(
+                    f"{settings.tw_public_url}/__tw_auth/set-password?token={quote(pending)}&next={quote(target)}",
+                    status_code=302,
+                )
+            code = tw_store.create_code(email, target)
+            return RedirectResponse(
+                f"{settings.tw_public_url}/__tw_auth/google/return?code={quote(code)}",
+                status_code=302,
+            )
         if purpose == "admin":
             if not google_store.is_admin(email):
                 return oauth_error_redirect(request, "admin", f"{email} 未被授予后台权限")
