@@ -145,6 +145,44 @@ def liquidation_price(
     return price
 
 
+def cross_liquidation_price(
+    side: int,
+    qty: float,
+    entry_price: float,
+    wallet_balance: float,
+    other_maintenance: float = 0.0,
+    other_unpnl: float = 0.0,
+    cum: float = 0.0,
+    mmr: float = 0.0,
+) -> float | None:
+    """Binance cross-margin liquidation price for one contract.
+
+    Official form (one-way mode):
+
+    LP1 = (WB - TMM1 + UPNL1 + cum - Side1*Position1*EP1)
+          / (Position1*MMR - Side1*Position1)
+
+    ``other_maintenance`` is TMM1, ``other_unpnl`` is UPNL1; for isolated or a
+    single-symbol account both are zero.
+    """
+    position = abs(float(qty))
+    if position <= 0 or entry_price <= 0:
+        return None
+    sign = 1 if side >= 0 else -1
+    numerator = (
+        wallet_balance
+        - other_maintenance
+        + other_unpnl
+        + cum
+        - sign * position * entry_price
+    )
+    denominator = position * mmr - sign * position
+    if abs(denominator) < _EPS:
+        return None
+    price = numerator / denominator
+    return price if price > 0 else None
+
+
 @dataclass(frozen=True, slots=True)
 class LiquidationEvent:
     ts: object

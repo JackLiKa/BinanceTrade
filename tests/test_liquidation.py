@@ -11,6 +11,7 @@ from gridtrade.execution.simulated import SimExecution, SimFees
 from gridtrade.research.metrics import compute_stats
 from gridtrade.risk.liquidation import (
     DEFAULT_MAINTENANCE_TIERS,
+    cross_liquidation_price,
     liquidation_price,
     maintenance_margin,
     tiers_from_brackets,
@@ -163,3 +164,13 @@ def test_binance_leverage_bracket_maps_to_tiers() -> None:
     assert tiers[1].mmr == 0.02
     assert tiers[1].maintenance_amount == 500.0
     assert tiers[-1].notional_cap < float("inf")  # JSON-safe
+
+
+def test_binance_cross_margin_formula_example() -> None:
+    # Binance-style cross-margin example: BTCUSDT long 20 @ 100,000,
+    # wallet 50,000, other maintenance 2,232.5, other UPNL -2,500,
+    # cum 1,975, MMR 0.67% -> LP 98,296.46.
+    price = cross_liquidation_price(
+        1, 20.0, 100_000.0, 50_000.0, 2_232.5, -2_500.0, 1_975.0, 0.0067
+    )
+    assert price == pytest.approx(98_296.46, rel=1e-6)

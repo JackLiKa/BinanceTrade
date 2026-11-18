@@ -32,15 +32,23 @@ class Dataset:
     funding: pd.DataFrame
     filters: SymbolFilters
     meta: dict
+    mark: pd.DataFrame | None = None
 
     @classmethod
     def load(cls, data_dir: str | Path, symbol: str) -> Dataset:
         root = Path(data_dir)
         bars = pd.read_parquet(root / f"{symbol}_1m.parquet").sort_values("open_time")
         funding = pd.read_parquet(root / f"{symbol}_funding.parquet").sort_values("funding_time")
+        mark_path = root / f"{symbol}_mark_1m.parquet"
+        mark = pd.read_parquet(mark_path).sort_values("open_time") if mark_path.exists() else None
         meta_path = root / f"{symbol}_meta.json"
         meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
         filters = SymbolFilters.from_exchange_filters(meta.get("filters", []))
+        if mark is not None and len(mark):
+            bars = bars.merge(mark, on="open_time", how="left")
+            for column in ("mark_open", "mark_high", "mark_low", "mark_close"):
+                if column in bars.columns:
+                    bars[column] = bars[column].fillna(bars["close"])
         for column in BAR_COLUMNS:
             if column not in bars.columns:
                 raise ValueError(f"{symbol} bars missing column {column}")
@@ -53,6 +61,7 @@ class Dataset:
             funding=funding.reset_index(drop=True),
             filters=filters,
             meta=meta,
+            mark=mark,
         )
 
     def slice(self, start=None, end=None) -> Dataset:
@@ -70,7 +79,15 @@ class Dataset:
             fund = fund[f_mask].reset_index(drop=True)
         else:
             fund = fund.iloc[0:0]
-        return Dataset(self.symbol, bars, fund, self.filters, self.meta)
+        mark = self.mark
+        if mark is not None and len(bars):
+            f_mask = (mark["open_time"] >= bars["open_time"].iloc[0]) & (
+                mark["open_time"] <= bars["open_time"].iloc[-1]
+            )
+            mark = mark[f_mask].reset_index(drop=True)
+        elif mark is not None:
+            mark = mark.iloc[0:0]
+        return Dataset(self.symbol, bars, fund, self.filters, self.meta, mark)
 
     def iter_bars(self) -> Iterator[Bar]:
         for row in self.bars.itertuples(index=False):

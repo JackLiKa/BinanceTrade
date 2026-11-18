@@ -26,7 +26,9 @@ from ..strategy.costs import CostModel
 from ..risk.liquidation import (
     DEFAULT_MAINTENANCE_TIERS,
     MaintenanceTier,
+    cross_liquidation_price,
     maintenance_margin,
+    select_tier,
     tiers_from_brackets,
 )
 from .config import PaperConfig
@@ -1087,6 +1089,27 @@ class PaperEngine:
             )
         self.state = states
 
+    @staticmethod
+    def _cross_lp(
+        state: SymbolState,
+        wallet: float,
+        total_maintenance: float,
+        total_unrealized: float,
+    ) -> float | None:
+        notional = abs(state.position) * state.mark
+        own_maintenance = maintenance_margin(notional, state.maintenance_tiers)
+        tier = select_tier(notional, state.maintenance_tiers)
+        return cross_liquidation_price(
+            1 if state.position > 0 else -1,
+            abs(state.position),
+            state.avg_entry,
+            wallet,
+            max(0.0, total_maintenance - own_maintenance),
+            total_unrealized - state.unrealized,
+            tier.maintenance_amount,
+            tier.mmr,
+        )
+
     # -- read models -----------------------------------------------------
 
     def cost_report(self) -> dict[str, Any]:
@@ -1178,6 +1201,12 @@ class PaperEngine:
             drawdown = 0.0
             if account.peak_equity > 0:
                 drawdown = (account.peak_equity - equity) / account.peak_equity * 100
+            total_maintenance = sum(
+                maintenance_margin(abs(s.position) * s.mark, s.maintenance_tiers)
+                for s in self.state.values()
+                if abs(s.position) > _EPS
+            )
+            total_unrealized = sum(s.unrealized for s in self.state.values())
             portfolio: list[dict[str, Any]] = []
             for state in self.state.values():
                 buy, sell = state.grid()
@@ -1209,6 +1238,13 @@ class PaperEngine:
                             abs(state.position) * state.mark, state.maintenance_tiers
                         ),
                         "liquidation_fee_bp": state.liquidation_fee_bp,
+                        "liquidation_price": (
+                            self._cross_lp(
+                                state, wallet, total_maintenance, total_unrealized
+                            )
+                            if abs(state.position) > _EPS
+                            else None
+                        ),
                     }
                 )
             with self._connect() as conn:

@@ -130,15 +130,28 @@ class ReplayEngine:
         fund_rates = list(self.dataset.funding["funding_rate"])
         fi = 0
 
+        has_mark = self.dataset.mark is not None and "mark_close" in self.dataset.bars.columns
         for i, row in enumerate(rows):
             bar = self._bar(row)
             self.port.begin_bar(bar)
+            mark_open = float(getattr(row, "mark_open", bar.open)) if has_mark else bar.open
+            mark_high = float(getattr(row, "mark_high", bar.high)) if has_mark else bar.high
+            mark_low = float(getattr(row, "mark_low", bar.low)) if has_mark else bar.low
+            mark_close = float(getattr(row, "mark_close", bar.close)) if has_mark else bar.close
+            self.port.mark(mark_open)
             while fi < len(fund_times) and fund_times[fi] <= bar.open_time:
                 self.port.settle_funding(float(fund_rates[fi]), bar.open)
                 fi += 1
 
             self.port.match()
-            liquidation_event = self.port.check_liquidation(bar)
+            liquidation_event = self.port.check_liquidation(
+                bar,
+                mark_open=mark_open,
+                mark_high=mark_high,
+                mark_low=mark_low,
+                mark_close=mark_close,
+            )
+            self.port.mark(mark_close)
             self.port.end_bar()
             equity[i] = self.port.equity
             inv_notional += abs(self.port.position) * bar.close

@@ -182,6 +182,8 @@ export interface PaperSymbolView {
   maker_fee_bp: number
   taker_fee_bp: number
   fee_source: 'exchange' | 'config'
+  liquidation_price?: number | null
+  liquidation_fee_bp?: number
 }
 
 export interface PaperState {

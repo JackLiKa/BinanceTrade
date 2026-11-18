@@ -243,7 +243,15 @@ class SimExecution:
             produced.extend(self._sweep(up=self._bar.direction > 0))
         return produced
 
-    def check_liquidation(self, bar: Bar) -> LiquidationEvent | None:
+    def check_liquidation(
+        self,
+        bar: Bar,
+        *,
+        mark_open: float | None = None,
+        mark_high: float | None = None,
+        mark_low: float | None = None,
+        mark_close: float | None = None,
+    ) -> LiquidationEvent | None:
         """Force-close the position if Binance-style maintenance is breached.
 
         The check uses the bar's extremes for the liquidation trigger (a gap
@@ -259,24 +267,28 @@ class SimExecution:
         mark = self._mark
         if mark <= 0:
             return None
+        open_px = mark_open if mark_open is not None else bar.open
+        high_px = mark_high if mark_high is not None else bar.high
+        low_px = mark_low if mark_low is not None else bar.low
+        close_px = mark_close if mark_close is not None else bar.close
         long = self.position > 0
         fill_price: float | None = None
         reason = "maintenance_margin"
         if long:
-            if bar.open <= lp:
-                fill_price, reason = bar.open, "gap_through_liquidation"
-            elif bar.low <= lp:
+            if open_px <= lp:
+                fill_price, reason = open_px, "gap_through_liquidation"
+            elif low_px <= lp:
                 fill_price = lp
-            elif bar.close <= lp:
-                fill_price = bar.close
+            elif close_px <= lp:
+                fill_price = close_px
         else:
-            if bar.open >= lp:
-                fill_price, reason = bar.open, "gap_through_liquidation"
-            elif bar.high >= lp:
+            if open_px >= lp:
+                fill_price, reason = open_px, "gap_through_liquidation"
+            elif high_px >= lp:
                 fill_price = lp
-            elif bar.close >= lp:
-                fill_price = bar.close
-        close_mark = bar.close if bar.close > 0 else mark
+            elif close_px >= lp:
+                fill_price = close_px
+        close_mark = close_px if close_px > 0 else mark
         wallet = self.wallet_balance
         close_margin_balance = wallet + self.position * (close_mark - self.entry_price)
         close_maintenance = maintenance_margin(abs(self.position) * close_mark, self.maintenance_tiers)

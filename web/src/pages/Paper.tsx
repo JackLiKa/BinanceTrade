@@ -312,6 +312,7 @@ export function Paper() {
                 <th className="py-2 text-right font-medium">持仓</th>
                 <th className="py-2 text-right font-medium">均价</th>
                 <th className="py-2 text-right font-medium">未实现</th>
+                <th className="py-2 text-right font-medium">强平价</th>
                 <th className="py-2 text-right font-medium">买 / 卖</th>
                 <th className="py-2 text-right font-medium">费率(m/t)</th>
                 <th className="py-2 pr-5 text-right font-medium">名义</th>
@@ -319,7 +320,7 @@ export function Paper() {
             </thead>
             <tbody>
               {data.portfolio.length === 0 ? (
-                <tr><td colSpan={10} className="px-5 py-8 text-center text-[12px] text-muted">暂无标的</td></tr>
+                <tr><td colSpan={11} className="px-5 py-8 text-center text-[12px] text-muted">暂无标的</td></tr>
               ) : (
                 data.portfolio.map((row) => (
                   <tr key={row.symbol} className="border-t border-line-soft">
@@ -340,6 +341,9 @@ export function Paper() {
                     <td className="py-2 text-right font-mono tabular-nums text-muted">{row.position ? fmtPrice(row.avg_entry) : '—'}</td>
                     <td className={cx('py-2 text-right font-mono tabular-nums', row.unrealized >= 0 ? 'text-up' : 'text-down')}>
                       {fmtMoney(row.unrealized, 3)}
+                    </td>
+                    <td className="py-2 text-right font-mono tabular-nums text-muted">
+                      {row.liquidation_price != null ? fmtPrice(row.liquidation_price) : '—'}
                     </td>
                     <td className="py-2 text-right font-mono text-[10.5px] text-muted">
                       {fmtPrice(row.buy_price)} / {fmtPrice(row.sell_price)}

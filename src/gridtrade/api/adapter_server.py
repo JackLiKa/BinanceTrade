@@ -177,6 +177,20 @@ class Handler(BaseHTTPRequestHandler):
                         },
                     )
                     return
+                if route == "/market/mark-klines":
+                    sym = (symbol or "BTCUSDT").upper()
+                    interval = (query.get("interval") or ["1m"])[0]
+                    limit = int((query.get("limit") or ["1500"])[0])
+                    start_ms = query.get("startTime") or query.get("start_time")
+                    params = {"symbol": sym, "interval": interval, "limit": limit}
+                    if start_ms:
+                        params["startTime"] = int(start_ms[0])
+                    rows = client._request("GET", "/fapi/v1/markPriceKlines", params)
+                    self._send(
+                        HTTPStatus.OK,
+                        {"ok": True, "symbol": sym, "interval": interval, "candles": rows},
+                    )
+                    return
                 if route == "/market/leverage-bracket":
                     sym = (symbol or "BTCUSDT").upper()
                     payload = client._request(
