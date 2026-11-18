@@ -24,6 +24,13 @@
 > 注意：Cloudflare Tunnel 的 Token 存于服务器 `/etc/cloudflared`（root），不在仓库；轮换 Token 后需更新服务。
 > `trycloudflare.com` 临时隧道已停用。
 
+## 1.1 同域名的第二个项目：TradingWorkstation
+
+- 公网：**https://tw.jacklika.com**（同一个 Cloudflare Tunnel，新增 Public Hostname `tw` → `http://127.0.0.1:80`）
+- 根路径 302 到 `/TradingWorkstation`，原 `http://81.71.71.131/TradingWorkstation` 保持可用
+- nginx 的 `trading-workstation.conf` 增加 `absolute_redirect off;`，否则根跳转会变成 `http://`；备份已移到 `/etc/nginx/backups/`，避免被 `sites-enabled/*` 重复加载
+- 若要让根路径直接显示（URL 不带 `/TradingWorkstation`），需要改 Next.js `basePath` 并重建；当前未改
+
 ## 2. 标准 Google OAuth（账号选择页）
 
 ### 2.1 客户端
