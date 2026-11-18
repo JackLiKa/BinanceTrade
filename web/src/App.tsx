@@ -2,6 +2,7 @@ import { Activity } from 'lucide-react'
 import { AppProvider, useApp } from './store'
 import { useRoute } from './router'
 import { Layout } from './components/Layout'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Login } from './pages/Login'
 import { Overview } from './pages/Overview'
 import { Market } from './pages/Market'
@@ -38,33 +39,36 @@ function Shell() {
   if (loading) return <Splash />
   if (!session) return <Login />
 
+  const page =
+    route === 'overview' ? (
+      <Overview />
+    ) : route === 'market' ? (
+      <Market />
+    ) : route === 'strategy' ? (
+      <Strategy />
+    ) : route === 'backtest' ? (
+      <Backtest />
+    ) : route === 'paper' ? (
+      <Paper />
+    ) : route === 'live' ? (
+      <Live />
+    ) : route === 'binance' ? (
+      <Binance />
+    ) : route === 'orders' ? (
+      <Orders />
+    ) : route === 'positions' ? (
+      <Positions />
+    ) : route === 'risk' ? (
+      <Risk />
+    ) : route === 'quality' ? (
+      <Quality />
+    ) : (
+      <Settings />
+    )
+
   return (
     <Layout>
-      {route === 'overview' ? (
-        <Overview />
-      ) : route === 'market' ? (
-        <Market />
-      ) : route === 'strategy' ? (
-        <Strategy />
-      ) : route === 'backtest' ? (
-        <Backtest />
-      ) : route === 'paper' ? (
-        <Paper />
-      ) : route === 'live' ? (
-        <Live />
-      ) : route === 'binance' ? (
-        <Binance />
-      ) : route === 'orders' ? (
-        <Orders />
-      ) : route === 'positions' ? (
-        <Positions />
-      ) : route === 'risk' ? (
-        <Risk />
-      ) : route === 'quality' ? (
-        <Quality />
-      ) : (
-        <Settings />
-      )}
+      <ErrorBoundary key={route}>{page}</ErrorBoundary>
     </Layout>
   )
 }

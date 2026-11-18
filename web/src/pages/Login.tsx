@@ -1,18 +1,32 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Activity, ArrowRight, KeyRound, Server, ShieldCheck } from 'lucide-react'
-import { api, getServer, getToken, setServer } from '../api'
+import {
+  Activity,
+  ArrowRight,
+  Check,
+  Copy,
+  ExternalLink,
+  KeyRound,
+  Server,
+  ShieldCheck,
+} from 'lucide-react'
+import { api, getServer, getToken, setServer, type AuthProviders, type GoogleDeviceStart, type GooglePollResult } from '../api'
 import { useApp } from '../store'
 import { Button, Field } from '../components/ui'
 import { errorText } from '../hooks'
 
 export function Login() {
-  const { signIn, toast } = useApp()
+  const { signIn, refreshSession, toast } = useApp()
   const [token, setTokenValue] = useState(() => getToken())
   const [server, setServerValue] = useState(() => getServer())
   const [showServer, setShowServer] = useState(() => Boolean(getServer()))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [health, setHealth] = useState<string | null>(null)
+  const [providers, setProviders] = useState<AuthProviders | null>(null)
+  const [flow, setFlow] = useState<GoogleDeviceStart | null>(null)
+  const [poll, setPoll] = useState<GooglePollResult | null>(null)
+  const [copied, setCopied] = useState(false)
+  const google = providers?.google
 
   useEffect(() => {
     let active = true
@@ -25,10 +39,79 @@ export function Login() {
       .catch(() => {
         if (active) setHealth(null)
       })
+    api
+      .authProviders()
+      .then((data) => {
+        if (active) setProviders(data)
+      })
+      .catch(() => {
+        if (active) setProviders(null)
+      })
     return () => {
       active = false
     }
   }, [server])
+
+  // Poll Google while the user completes authorization in another tab/browser.
+  useEffect(() => {
+    if (!flow) return
+    let cancelled = false
+    let timer = 0
+    const tick = async () => {
+      try {
+        const result = await api.googlePoll(flow.flow_id)
+        if (cancelled) return
+        setPoll(result)
+        if (result.status === 'ok') {
+          setFlow(null)
+          toast(`已登录 ${result.email ?? 'Google 账号'}`, 'ok')
+          await refreshSession()
+        } else if (result.status === 'pending') {
+          timer = window.setTimeout(tick, Math.max(5, result.interval ?? flow.interval) * 1000)
+        } else {
+          setError(result.error ?? 'Google 登录失败')
+          setFlow(null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(errorText(err))
+          setFlow(null)
+        }
+      }
+    }
+    timer = window.setTimeout(tick, Math.max(5, flow.interval) * 1000)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [flow, refreshSession, toast])
+
+  const startGoogle = async () => {
+    setBusy(true)
+    setError(null)
+    setPoll(null)
+    try {
+      const started = await api.googleStart()
+      setFlow(started)
+      // WebView/APK routes window.open to the system browser (MainActivity).
+      window.open(started.verification_url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      setError(errorText(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const copyCode = async () => {
+    if (!flow) return
+    try {
+      await navigator.clipboard.writeText(flow.user_code)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    } catch {
+      window.prompt('复制授权码', flow.user_code)
+    }
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -82,12 +165,12 @@ export function Login() {
               <Server size={14} className="text-info" /> 运行在本机或 Tailscale
             </li>
             <li className="flex items-center gap-2.5">
-              <KeyRound size={14} className="text-accent" /> 单一令牌，httpOnly Cookie
+              <KeyRound size={14} className="text-accent" /> Google 账号登录，管理员白名单
             </li>
           </ul>
         </div>
 
-        <form onSubmit={submit} className="flex flex-col justify-center gap-4 p-7 md:p-8">
+        <div className="flex flex-col justify-center gap-4 p-7 md:p-8">
           <div className="md:hidden">
             <div className="flex items-center gap-2">
               <Activity size={16} className="text-accent" />
@@ -95,50 +178,10 @@ export function Login() {
             </div>
           </div>
           <div>
-            <h1 className="text-[17px] font-semibold tracking-tight text-ink">解锁研究终端</h1>
+            <h1 className="text-[17px] font-semibold tracking-tight text-ink">登录研究终端</h1>
             <p className="mt-1 text-[12px] leading-relaxed text-muted">
-              粘贴服务端生成的访问令牌，通常位于 <code className="font-mono text-accent">var/token</code>。
+              使用管理员允许的 Google 账号登录；授权一次后会话保持 30 天。
             </p>
-          </div>
-
-          <Field label="访问令牌">
-            <input
-              className="input font-mono"
-              type="password"
-              autoComplete="current-password"
-              value={token}
-              onChange={(event) => setTokenValue(event.target.value)}
-              placeholder="••••••••••••••••••••"
-              autoFocus
-            />
-          </Field>
-
-          <div>
-            <button
-              type="button"
-              onClick={() => setShowServer((open) => !open)}
-              className="flex items-center gap-1.5 text-[11px] text-muted transition-colors hover:text-ink"
-            >
-              <Server size={12} />
-              {showServer ? '隐藏服务器地址' : '服务器地址'}
-            </button>
-            {showServer ? (
-              <div className="mt-2">
-                <input
-                  className="input font-mono text-[12px]"
-                  value={server}
-                  onChange={(event) => setServerValue(event.target.value)}
-                  placeholder="http://192.168.1.20:8000"
-                  inputMode="url"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                />
-                <p className="mt-1.5 text-[10.5px] leading-snug text-faint">
-                  面板由 API 自身提供时留空；APK 中请填写局域网或 Tailscale 地址。
-                </p>
-              </div>
-            ) : null}
           </div>
 
           {error ? (
@@ -147,15 +190,101 @@ export function Login() {
             </div>
           ) : null}
 
-          <Button type="submit" variant="primary" loading={busy} className="w-full">
-            登录 <ArrowRight size={14} />
-          </Button>
+          {google?.enabled ? (
+            flow ? (
+              <div className="space-y-3 rounded-xl border border-line bg-elevated/40 p-4">
+                <p className="text-[12px] text-muted">
+                  在打开的 Google 页面输入下面的授权码；没有自动打开就点按钮。
+                </p>
+                <div className="flex items-center justify-between rounded-lg border border-accent/30 bg-accent/10 px-3 py-2.5">
+                  <span className="font-mono text-[20px] font-semibold tracking-[0.18em] text-accent">
+                    {flow.user_code}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={copyCode}
+                    className="inline-flex items-center gap-1 rounded-md border border-accent/30 px-2 py-1 text-[10.5px] text-accent"
+                  >
+                    {copied ? <Check size={11} /> : <Copy size={11} />}
+                    {copied ? '已复制' : '复制'}
+                  </button>
+                </div>
+                <a
+                  href={flow.verification_url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="inline-flex items-center gap-1.5 text-[11.5px] text-accent hover:underline"
+                >
+                  <ExternalLink size={12} /> 打开 Google 授权页
+                </a>
+                <p className="text-[10.5px] text-faint">
+                  {poll?.status === 'pending' ? '等待 Google 授权…' : '正在等待授权结果…'}
+                </p>
+              </div>
+            ) : (
+              <Button type="button" variant="primary" loading={busy} className="w-full" onClick={startGoogle}>
+                <span className="grid h-4 w-4 place-items-center rounded-full bg-white/90 font-sans text-[11px] font-bold text-[#4285F4]">
+                  G
+                </span>
+                使用 Google 账号登录
+              </Button>
+            )
+          ) : (
+            <div className="rounded-lg border border-line bg-elevated/30 px-3 py-2 text-[11px] leading-relaxed text-muted">
+              {google?.configured
+                ? 'Google 登录已配置但未启用，请在 /admin 开启。'
+                : 'Google 登录尚未配置；请管理员在 /admin 填写 Client ID/Secret 并添加允许账号。'}
+            </div>
+          )}
+
+          <details className="group rounded-lg border border-line/70 px-3 py-2">
+            <summary className="cursor-pointer text-[11px] text-muted marker:content-none">
+              使用访问令牌登录（备用）
+            </summary>
+            <form onSubmit={submit} className="mt-3 space-y-3">
+              <Field label="访问令牌">
+                <input
+                  className="input font-mono"
+                  type="password"
+                  autoComplete="current-password"
+                  value={token}
+                  onChange={(event) => setTokenValue(event.target.value)}
+                  placeholder="••••••••••••••••••••"
+                />
+              </Field>
+              <button
+                type="button"
+                onClick={() => setShowServer((open) => !open)}
+                className="flex items-center gap-1.5 text-[11px] text-muted transition-colors hover:text-ink"
+              >
+                <Server size={12} />
+                {showServer ? '隐藏服务器地址' : '服务器地址'}
+              </button>
+              {showServer ? (
+                <div>
+                  <input
+                    className="input font-mono text-[12px]"
+                    value={server}
+                    onChange={(event) => setServerValue(event.target.value)}
+                    placeholder="http://192.168.1.20:8000"
+                    inputMode="url"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+                </div>
+              ) : null}
+              <Button type="submit" variant="ghost" loading={busy} className="w-full">
+                用令牌登录 <ArrowRight size={14} />
+              </Button>
+            </form>
+          </details>
 
           <div className="flex items-center justify-between text-[10.5px] text-faint">
             <span>{health ?? '服务端不可达'}</span>
             <span className="font-mono">{server || '同源'}</span>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   )

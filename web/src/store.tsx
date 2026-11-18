@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { api, ApiError, getToken, setToken, streamUrl, type MarketSnapshot, type ModeInfo, type Session } from './api'
+import { api, ApiError, setToken, streamUrl, type MarketSnapshot, type ModeInfo, type Session } from './api'
 
 interface Toast {
   id: number
@@ -81,8 +81,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (getToken()) void refreshSession()
-    else setLoading(false)
+    // Cookie sessions (Google OAuth) exist without a localStorage token, so
+    // always ask the server; 401 simply means "show the login page".
+    void refreshSession()
   }, [refreshSession])
 
   const setSymbol = useCallback((next: string) => {

@@ -40,6 +40,7 @@ from .binance_node import BinanceNodeClient, BinanceNodeError
 from .jobs import JobQueue
 from .live import LiveMarket
 from .admin import ADMIN_COOKIE, SESSION_TTL, AdminError, AdminService, AdminAuth
+from .google_auth import GoogleAuthError, GoogleAuthStore, GoogleDeviceFlow
 from .live_gate import LiveError, LiveService, write_env_file
 from .paper import PaperEngine
 from .service import INTERVALS, ResearchService
@@ -162,6 +163,22 @@ class LoginRequest(BaseModel):
     token: str = Field(min_length=1, max_length=256)
 
 
+class GooglePollRequest(BaseModel):
+    flow_id: str = Field(min_length=8, max_length=128)
+
+
+class AdminGoogleConfig(BaseModel):
+    client_id: str | None = None
+    client_secret: str | None = None
+    enabled: bool | None = None
+    clear_secret: bool = False
+
+
+class AdminGoogleUser(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    name: str = Field("", max_length=120)
+
+
 class KillSwitchRequest(BaseModel):
     engaged: bool
 
@@ -263,6 +280,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     paper = PaperEngine(settings.paper, settings.var_dir)
     live_service = LiveService(settings.live, env_path=settings.env_path)
     admin_service = AdminService(settings, store, live_service, paper)
+    google_store = GoogleAuthStore(settings.var_dir / "auth.db")
+    google_flow = GoogleDeviceFlow(
+        google_store,
+        relay_url=settings.google_relay_url,
+        relay_token=settings.google_relay_token,
+    )
     started_at = time.time()
 
     @asynccontextmanager
@@ -332,13 +355,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return api_token
         return request.cookies.get(COOKIE_NAME, "")
 
+    def actor_for(token: str) -> str | None:
+        if token and hmac.compare_digest(token, settings.token):
+            return "token"
+        email = google_store.session_email(token)
+        return email
+
     def require_token(request: Request) -> None:
-        if not hmac.compare_digest(supplied_token(request), settings.token):
+        actor = actor_for(supplied_token(request))
+        if actor is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="invalid or missing access token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        request.state.actor = actor
 
     def visible_symbols() -> list[str]:
         return service.symbols()
@@ -378,20 +409,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "symbols": visible_symbols(),
         }
 
-    @app.post("/api/auth/login", tags=["auth"])
-    async def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
-        if not hmac.compare_digest(payload.token.strip(), settings.token):
-            store.audit("auth.failed", "invalid token")
-            raise HTTPException(status_code=401, detail="invalid access token")
+    def set_panel_cookie(response: Response, value: str) -> None:
         response.set_cookie(
             COOKIE_NAME,
-            settings.token,
+            value,
             max_age=COOKIE_MAX_AGE,
             httponly=True,
             samesite="lax",
             secure=settings.secure_cookie,
             path="/",
         )
+
+    @app.get("/api/auth/providers", tags=["auth"])
+    async def auth_providers() -> dict[str, Any]:
+        config = google_store.config()
+        return {
+            "google": {
+                "enabled": config.enabled,
+                "configured": config.configured,
+                "device_flow": True,
+                "users": len(google_store.list_users()),
+            }
+        }
+
+    @app.post("/api/auth/google/start", tags=["auth"])
+    async def google_start() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(google_flow.start)
+        except GoogleAuthError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    @app.post("/api/auth/google/poll", tags=["auth"])
+    async def google_poll(payload: GooglePollRequest, response: Response) -> dict[str, Any]:
+        try:
+            result = await asyncio.to_thread(google_flow.poll, payload.flow_id)
+        except GoogleAuthError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        token = result.pop("session_token", "")
+        if result.get("status") == "ok" and token:
+            set_panel_cookie(response, token)
+            store.audit("auth.google_login", str(result.get("email") or ""), actor="google")
+        return result
+
+    @app.post("/api/auth/login", tags=["auth"])
+    async def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
+        if not hmac.compare_digest(payload.token.strip(), settings.token):
+            store.audit("auth.failed", "invalid token")
+            raise HTTPException(status_code=401, detail="invalid access token")
+        set_panel_cookie(response, settings.token)
         store.audit("auth.login", "cookie issued")
         return {
             "ok": True,
@@ -400,16 +465,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/api/auth/logout", tags=["auth"], dependencies=guarded)
-    async def logout(response: Response) -> dict[str, bool]:
+    async def logout(request: Request, response: Response) -> dict[str, bool]:
+        token = supplied_token(request)
+        if not hmac.compare_digest(token, settings.token):
+            google_store.revoke_session(token)
         response.delete_cookie(COOKIE_NAME, path="/")
         store.audit("auth.logout", "cookie cleared")
         return {"ok": True}
 
     @app.get("/api/session", tags=["system"], dependencies=guarded)
-    async def session() -> dict[str, Any]:
+    async def session(request: Request) -> dict[str, Any]:
         return {
             "ok": True,
             "version": VERSION,
+            "actor": getattr(request.state, "actor", ""),
             "symbol": resolve_symbol(None),
             "symbols": visible_symbols(),
             "modes": MODES,
@@ -952,6 +1021,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "kill_switch": store.get_bool("kill_switch", False),
         }
 
+    @app.get("/api/admin/google", dependencies=admin_guarded)
+    async def admin_google() -> dict[str, Any]:
+        config = google_store.config()
+        return {
+            "enabled": config.enabled,
+            "configured": config.configured,
+            "client_id": config.client_id,
+            "secret_hint": ("…" + config.client_secret[-4:]) if config.client_secret else "",
+            "users": await asyncio.to_thread(google_store.list_users),
+            "device_flow": True,
+        }
+
+    @app.post("/api/admin/google/config", dependencies=admin_guarded)
+    async def admin_google_config(payload: AdminGoogleConfig) -> dict[str, Any]:
+        config = await asyncio.to_thread(
+            google_store.set_config,
+            client_id=payload.client_id,
+            client_secret=payload.client_secret,
+            enabled=payload.enabled,
+            clear_secret=payload.clear_secret,
+        )
+        store.audit("admin.google_config", "updated", actor="admin")
+        return {
+            "enabled": config.enabled,
+            "configured": config.configured,
+            "client_id": config.client_id,
+            "secret_hint": ("…" + config.client_secret[-4:]) if config.client_secret else "",
+        }
+
+    @app.post("/api/admin/google/users", dependencies=admin_guarded)
+    async def admin_google_add_user(payload: AdminGoogleUser) -> dict[str, Any]:
+        try:
+            user = await asyncio.to_thread(google_store.add_user, payload.email, payload.name, "admin")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        store.audit("admin.google_user_add", user["email"], actor="admin")
+        return {"user": user}
+
+    @app.delete("/api/admin/google/users", dependencies=admin_guarded)
+    async def admin_google_remove_user(email: str = Query(..., min_length=3, max_length=254)) -> dict[str, Any]:
+        removed = await asyncio.to_thread(google_store.remove_user, email)
+        store.audit("admin.google_user_remove", email.lower(), actor="admin")
+        return {"removed": removed}
+
     @app.get("/api/audit", dependencies=guarded)
     async def audit_log(limit: int = Query(60, ge=1, le=500)) -> dict[str, Any]:
         return {"entries": await asyncio.to_thread(store.list_audit, limit=limit)}
@@ -965,7 +1078,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         symbol: str | None = Query(default=None),
     ) -> None:
         supplied = token or websocket.cookies.get(COOKIE_NAME, "")
-        if not hmac.compare_digest(supplied, settings.token):
+        if actor_for(supplied) is None:
             await websocket.close(code=4401)
             return
         await websocket.accept()

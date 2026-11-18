@@ -134,3 +134,54 @@ export function statusTone(status: Run['status']): 'neutral' | 'up' | 'down' | '
       return 'neutral'
   }
 }
+
+
+/** True once the element has been near the viewport; stays true afterwards. */
+export function useInView<T extends Element>(rootMargin = '240px') {
+  const ref = useRef<T | null>(null)
+  const [inView, setInView] = useState(false)
+
+  useEffect(() => {
+    if (inView) return
+    const node = ref.current
+    if (!node) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setInView(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setInView(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [inView, rootMargin])
+
+  return [ref, inView] as const
+}
+
+/** Mount expensive children only after the first paint (or a short idle delay). */
+export function useDeferredMount(delayMs = 16) {
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    let timer = window.setTimeout(() => setReady(true), delayMs)
+    const idle = window.requestIdleCallback?.(
+      () => {
+        window.clearTimeout(timer)
+        setReady(true)
+      },
+      { timeout: delayMs + 400 },
+    )
+    return () => {
+      window.clearTimeout(timer)
+      if (idle != null) window.cancelIdleCallback?.(idle)
+    }
+  }, [delayMs])
+  return ready
+}

@@ -16,7 +16,7 @@
 ```
 src/gridtrade/            引擎、策略、OMS、模拟撮合、研究运行器
 src/gridtrade/api/        FastAPI 应用、配置、SQLite 存储、任务队列、行情推送
-web/                      React 19 + Vite 6 + Tailwind 4 单页应用（hash 路由，11 个页面）
+web/                      React 19 + Vite 6 + Tailwind 4 单页应用（hash 路由，12 个页面）
 apk/                      无 Gradle 的 Android 构建：manifest、单个 Activity、build.sh
 research/                 parquet 数据集、抓取脚本、回测辅助
 tests/                    pytest 用例（领域、引擎、OMS、风控、模拟、策略）
@@ -59,12 +59,16 @@ cd web && pnpm dev     # http://localhost:5173
 
 ### 登录
 
-首次启动会生成随机令牌写入 `var/token`（权限 `0600`）。把它粘贴到登录页，或用
-`cat var/token` 查看。
+面板默认使用 **Google 账号登录**（OAuth Device Flow，管理员在 `/admin` 配置 Client ID/Secret 与允许邮箱）。
+登录页显示一次性 `code`，在任意浏览器打开 <https://www.google.com/device> 输入即可；成功后服务端设置
+30 天 `gt_token` httpOnly Cookie。APK 与网页共用该会话。
 
-令牌支持三种传递方式：`Authorization: Bearer <token>`、`X-API-Token: <token>`，以及
-`/api/auth/login` 设置的 `gt_token` httpOnly Cookie。WebSocket 用 `?token=<token>`
-认证，因为浏览器无法为握手设置请求头。
+静态令牌仍是备用方式（登录页“使用访问令牌登录”）：令牌在服务器 `var/token`（权限 `0600`），
+支持 `Authorization: Bearer <token>`、`X-API-Token: <token>` 与 `/api/auth/login` Cookie；
+WebSocket 用 `?token=<token>`。
+
+> Google 登录前提：广州服务器需通过东京节点中继访问 Google（`GRIDTRADE_GOOGLE_RELAY`），
+> 并在 `/admin` 填好 OAuth 凭据。详见 [14](docs/memory/14-Google-OAuth与行情懒加载-2026-11-18.md)。
 
 ### 配置
 
@@ -82,6 +86,8 @@ cd web && pnpm dev     # http://localhost:5173
 | `GRIDTRADE_AUTORUN` | `1` | 启动时把上一进程遗留的排队/运行中任务标记为失败 |
 | `GRIDTRADE_MARKET_LIVE` | `1` | 是否访问 Binance 实时行情；服务器出网被墙时设 `0`，否则每请求会等待连接超时 |
 | `GRIDTRADE_PROXY` | 空 | 访问 Binance 的代理（`http://host:port` 或 `socks5://host:port`），需能 CONNECT 到 443 |
+| `GRIDTRADE_GOOGLE_RELAY` | 空 | 东京 Google OAuth 中继地址，如 `http://10.66.0.2:8101` |
+| `GRIDTRADE_GOOGLE_RELAY_TOKEN` | 空 | 中继共享头 `X-Relay-Token` |
 | `GRIDTRADE_SECURE_COOKIE` | `0` | 为认证 Cookie 加 `Secure`（仅 HTTPS） |
 | `GRIDTRADE_CORS_ORIGINS` | localhost:5173 | 逗号分隔的开发源 |
 
@@ -137,6 +143,7 @@ cp .env.example .env
 | `#/backtest` | 回放 / 前向滚动 / 参数扫描、月度归因、订单流、权益与回撤 |
 | `#/paper` | 实时组合模拟盘：多标的共享保证金、网格纸面成交、手续费/资金费、组合权益与持仓 |
 | `#/live` | 实盘账户（Gate）：余额/持仓/挂单/成交/流水与实盘分析；下单默认锁定 |
+| `#/binance` | Binance 东京执行节点（只读）：健康/账户/持仓/挂单/成交/告警 |
 | `#/orders` | 任务选择、订单/成交表、拒单原因、期末挂单 |
 | `#/positions` | 模拟持仓、网格状态、分层库存 |
 | `#/risk` | 派生限额、回撤保护、紧急停止、拒单计数 |
@@ -209,22 +216,21 @@ adb install -r apk/gridtrade.apk
 部分 OPPO/OnePlus 机型会在 `adb install` 时卡在安装引导，可改用
 `pm install-create` / `pm install-write` / `pm install-commit` 分段安装。
 
-**APK 默认免登录**：构建时读取 `apk/.env`（gitignore），把服务器地址与令牌写入
-`BuildConfig`，首次启动直接进入面板，不再显示登录页。
+**APK v0.3.0 默认 Google 登录**：构建时读取 `apk/.env`（gitignore）写入服务器地址；
+`TOKEN` 留空时首次启动显示登录页，可选择 Google 账号或访问令牌。Google 授权页会交给系统浏览器，
+登录成功后 Cookie 保存在 WebView，重启仍有效。
 
 ```bash
 cp apk/.env.example apk/.env
 # SERVER_URL=http://81.71.71.131:8000
-# TOKEN=<服务端 var/token 或 .env 中的 GRIDTRADE_TOKEN>
+# TOKEN=            # 留空 => 显示 Google 登录页；填令牌 => 自动登录（备用）
 ./apk/build.sh
 ```
 
-没有 `apk/.env` 时会回退到内置默认地址并要求手动填写服务器/令牌（首次安装或清除数据后）。
-进入面板后，在页面历史尽头按返回键仍可打开“服务器与令牌”菜单。
-
 注意：
 
-- 令牌会被编译进 APK，只应安装在自己的设备上；令牌轮换后需要重新构建。
+- 不再默认内嵌令牌；如需自动登录可把 `TOKEN` 填回 `apk/.env` 再构建。
+- 令牌一旦编译进 APK，只应安装在自己的设备上；令牌轮换后需要重新构建。
 - `minSdk 26`、`target 34`，允许明文 HTTP 以便局域网/公网 IP 访问。
 - 只改 Web UI 不需要重建 APK：Activity 从服务端加载 `web/dist`。只有 Java、
   manifest、资源或 `apk/.env` 变更才需要重建 APK。
@@ -245,6 +251,7 @@ cp apk/.env.example apk/.env
 
 - 默认账号/密码：`admin / admin`（首次登录后请立即在“安全”里修改）。
 - 功能：概览（模拟盘/实盘状态）、Gate 实盘凭据与风控上限、模拟盘标的与参数、启动/停止/重置、轮换面板令牌、修改密码、审计日志。
+- **Google 登录**：配置 OAuth Client ID/Secret、启停、维护允许登录的 Google 邮箱；数据存 `var/auth.db`。
 - 凭据写服务器 `.env`；管理员密码以 PBKDF2 哈希存在 `var/admin.db`，不在 `.env` 中。
 - **安全提示**：后台走 HTTP 时密码是明文传输，建议尽快配 HTTPS；默认密码务必修改。
 
@@ -260,6 +267,7 @@ cp apk/.env.example apk/.env
 - [06 前端与APK](docs/memory/06-前端与APK.md)
 - [07 部署与运维](docs/memory/07-部署与运维.md)
 - [08 测试与验收](docs/memory/08-测试与验收.md)（桌面 Web 与真机 APK 的可复现步骤）
+- [14 Google OAuth 与行情懒加载](docs/memory/14-Google-OAuth与行情懒加载-2026-11-18.md)
 - [09 策略研究结论](docs/memory/09-策略研究结论.md)（**改策略前必读**）
 - [10 问题与决策记录](docs/memory/10-问题与决策记录.md)
 - [11 外部接口清单](docs/memory/11-外部接口清单.md)
@@ -273,7 +281,7 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 74 项
+.venv/bin/python -m pytest            # 159 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 

@@ -2,7 +2,7 @@
 
 > **这套文档是给"换人 / 换机器继续开发"用的。** 它记录项目现状、架构、接口、配置、部署、测试、已验证结论与未完成事项。
 > **权威性**：本套文档（2026-11-17 重写）**取代**旧版 `01..09`；与 `vault/` 原始笔记冲突时，以本套为准。
-> **代码基线**：提交 `9a5cc4f`（2026-11-17 17:39）· 仓库 <https://github.com/JackLiKa/BinanceTrade>（public）
+> **代码基线**：2026-11-18 `main`（Google OAuth/行情懒加载见 [14](14-Google-OAuth与行情懒加载-2026-11-18.md)）· 仓库 <https://github.com/JackLiKa/BinanceTrade>（public）
 > **安全约定**：仓库是公开的，**任何令牌、私钥、密码、Secret 都不会写入这里**。
 
 ---
@@ -15,10 +15,11 @@
 | 代码量 | Python `src/gridtrade` 约 5,400 行；前端 `web/src` 约 7,100 行；`MainActivity.java` 538 行 |
 | 页面 | **12 条 hash 路由** + 独立管理后台 `/admin` + Swagger `/api/docs` + `/ws` |
 | 接口 | **46 个路由装饰器** = 45 条 HTTP（43 进 OpenAPI：44 path / 45 operation）+ 1 条 WebSocket |
-| 测试 | pytest **74 项**（POSIX 全绿；Windows 73 passed + 1 权限位平台差异） |
+| 测试 | pytest **159 项**（含 Google 登录/设备流 5 项；POSIX 全绿） |
 | 线上 | `http://81.71.71.131:8000`（**明文 HTTP**），令牌在服务器 `var/token` |
 | 实盘 | Gate USDT 永续**只读分析可用**；下单代码完备但**默认锁定**（未启用 409 / 未解锁 403） |
-| 最大风险 | 明文 HTTP + 单令牌全权限 + 后台默认密码 `admin/admin` |
+| 认证 | 静态面板令牌 **或** Google 白名单会话（30 天 Cookie）；后台另有 `admin` 密码 |
+| 最大风险 | 明文 HTTP + 默认后台密码 `admin/admin`；Google 登录需东京中继 |
 | 最重要结论 | GOOGLUSDT 分钟级网格**没有可部署正期望**（见 [09](09-策略研究结论.md)）——别再试 |
 
 ---
@@ -40,6 +41,7 @@
 | 11 | [11 外部接口清单](11-外部接口清单.md) | 调用了哪些交易所接口、官方文档对照、签名算法、白名单测试、新增接口流程 | 接行情/实盘、合规审计 |
 | 12 | [12 待办与路线图](12-待办与路线图.md) | P0–P4 待办、Binance Plan B 方案、需用户决策的事项 | 排期、决策 |
 | 13 | [13 历史归档](13-历史归档.md) | 提交时间线、两天开发流水、2026-11-17 对话决策、旧文档→新文档映射 | 复盘、追溯 |
+| 14 | [14 Google OAuth 与行情懒加载](14-Google-OAuth与行情懒加载-2026-11-18.md) | Device Flow 登录、后台白名单、行情页黑屏根因与懒加载、APK v0.3.0 | 配登录、改行情页的人 |
 | — | [vault/ 原始笔记索引](vault/README.md) | 19 篇 DSH 原始笔记的逐篇索引、主题聚类、冲突与缺口 | 想追溯第一手记录的人 |
 
 > 每篇文档头部都有 **用途 / 读者 / 最后核实 / 相关文档 / 可信度** 五元组。可信度：**A** = 已对照当前代码或本机实测；**B** = 历史笔记，未复核；**C** = 需设备/服务器才能复现。
@@ -97,7 +99,7 @@ pnpm --dir web build          # 内含 tsc --noEmit
 
 ## 5. 五条"动手前必须知道"
 
-1. **令牌 = 全权限**。泄露就删 `var/token` 重启（自动生成新令牌），或设 `GRIDTRADE_TOKEN`；轮换后**APK 必须重打包**（令牌编译在包里）。
+1. **令牌 = 全权限**。泄露就删 `var/token` 重启（自动生成新令牌），或设 `GRIDTRADE_TOKEN`；轮换后旧浏览器/APK 会话失效。Google 登录单独走 `var/auth.db` 白名单，与令牌并存。
 2. **实盘默认锁死**。`GRIDTRADE_LIVE_TRADING=0` 时不会发出任何真实订单；写接口返回 **409（未启用/未配置）/ 403（已启用未解锁）**。不要为了"测试"把它打开。
 3. **`var/` 不可再生**。`gridtrade.db`（任务历史）、`paper.db`（模拟盘账户）、`admin.db`（后台账号）、`token` 都在里面；rsync `--delete` 或清理时**必须排除 `var/`**。
 4. **不构建前端就没有页面**。后端只托管 `web/dist`；改完前端必须 `pnpm --dir web build`，APK 用户还要强刷。
@@ -139,7 +141,7 @@ pnpm --dir web build          # 内含 tsc --noEmit
 | 撮合 / 状态机 / intrabar / 拒单原因 | [02](02-后端架构与领域模型.md) |
 | 手续费 / 资金费 / 滑点公式 | [02](02-后端架构与领域模型.md) · [09 §7](09-策略研究结论.md#7-成本结构拆解) |
 | 任务队列 / jobs / 取消 / 进度 | [02](02-后端架构与领域模型.md) · [03](03-接口参考.md) |
-| 认证 / 令牌 / Cookie / 401 | [03](03-接口参考.md) · [04](04-配置与数据存储.md) |
+| 认证 / 令牌 / Google OAuth / Cookie / 401 | [03](03-接口参考.md) · [04](04-配置与数据存储.md) · [14](14-Google-OAuth与行情懒加载-2026-11-18.md) |
 | 503 no research datasets / 409 / 403 | [08 §4](08-测试与验收.md#4-本机最小可复现验证本次实测) · [10 §5](10-问题与决策记录.md#5-本次核实发现的旧文档错误) |
 | 环境变量全表 / `.env` 解析 | [04](04-配置与数据存储.md) |
 | SQLite 表结构 / WAL / 备份 | [04](04-配置与数据存储.md) |
@@ -168,7 +170,7 @@ src/gridtrade/          # 领域、策略、执行、风控、研究、API（api
 web/                    # React 19 + Vite 6 + Tailwind 4 SPA；public/admin/index.html 是后台页
 apk/                    # 无 Gradle 的 Android 构建：manifest、单 Activity、build.sh、预编译 apk
 research/               # fetch.py（抓数据）、backtest.py（旧版脚本，仅历史参考）
-tests/                  # 11 个 pytest 文件 + conftest.py（74 项）
+tests/                  # 12 个 pytest 文件 + conftest.py（159 项）
 docs/screens/           # 14 张验收截图
 docs/memory/            # 本文档集（入口就是本文件）
 var/                    # 运行期：三个 SQLite + token（不入库）

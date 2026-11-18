@@ -635,10 +635,37 @@ export interface ModeInfo {
 export interface Session {
   ok: boolean
   version: string
+  actor?: string
   symbol: string
   symbols: string[]
   modes: Record<string, ModeInfo>
   kill_switch: boolean
+}
+
+export interface AuthProviders {
+  google: {
+    enabled: boolean
+    configured: boolean
+    device_flow: boolean
+    users: number
+  }
+}
+
+export interface GoogleDeviceStart {
+  flow_id: string
+  user_code: string
+  verification_url: string
+  expires_in: number
+  interval: number
+}
+
+export interface GooglePollResult {
+  status: 'pending' | 'ok' | 'denied' | 'expired' | 'not_allowed' | 'error'
+  email?: string
+  name?: string
+  picture?: string
+  error?: string
+  interval?: number
 }
 
 export interface SettingsView {
@@ -748,7 +775,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(0, '无法连接服务端，请检查地址与网络。')
   }
   if (response.status === 401) {
-    throw new ApiError(401, '访问令牌被拒绝，请在设置中更新。')
+    throw new ApiError(401, '未登录或会话已过期，请重新登录。')
   }
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`
@@ -777,6 +804,14 @@ export const api = {
       '/api/auth/login',
       json({ token }),
     ),
+
+  authProviders: () => request<AuthProviders>('/api/auth/providers'),
+
+  googleStart: () =>
+    request<GoogleDeviceStart>('/api/auth/google/start', { method: 'POST' }),
+
+  googlePoll: (flowId: string) =>
+    request<GooglePollResult>('/api/auth/google/poll', json({ flow_id: flowId })),
 
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
 
@@ -815,17 +850,37 @@ export const api = {
     const qs = search.toString()
     const raw = await request<{
       symbol: string
-      summary: FundingResponse['summary']
+      summary?: FundingResponse['summary']
       funding: Array<[number, number, number | null]>
     }>(`/api/market/funding${qs ? `?${qs}` : ''}`)
+    const points = raw.funding.map(([time, rate, mark]) => ({
+      time,
+      rate,
+      mark_price: mark,
+    }))
+    // Older node builds omit summary; derive a safe one instead of crashing
+    // the whole page on `data.summary.mean_rate`.
+    const rates = points.map((point) => point.rate)
+    const mean = rates.length ? rates.reduce((sum, rate) => sum + rate, 0) / rates.length : 0
+    const ordered = [...rates].sort((a, b) => a - b)
+    const median = ordered.length
+      ? ordered.length % 2
+        ? ordered[Math.floor(ordered.length / 2)]
+        : (ordered[ordered.length / 2 - 1] + ordered[ordered.length / 2]) / 2
+      : 0
+    const summary = raw.summary ?? {
+      count: rates.length,
+      mean_rate: mean,
+      median_rate: median,
+      positive_pct: rates.length ? (rates.filter((rate) => rate > 0).length / rates.length) * 100 : 0,
+      annualized_pct: mean * 3 * 365 * 100,
+      interval_hours: 8,
+      last: null,
+    }
     return {
       symbol: raw.symbol,
-      summary: raw.summary,
-      points: raw.funding.map(([time, rate, mark]) => ({
-        time,
-        rate,
-        mark_price: mark,
-      })),
+      summary,
+      points,
     } satisfies FundingResponse
   },
 

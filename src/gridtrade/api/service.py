@@ -297,7 +297,40 @@ class ResearchService:
         if self.live.node_enabled:
             live = await self.live.node_funding(symbol, limit)
             if live is not None:
-                return {"symbol": symbol, "count": live.get("count", 0), "funding": live["funding"], "source": "node"}
+                points = live["funding"]
+                rates = [float(row[1]) for row in points if len(row) > 1]
+                interval = 8.0
+                per_day = 24.0 / interval
+                mean = sum(rates) / len(rates) if rates else 0.0
+                ordered = sorted(rates)
+                if ordered:
+                    middle = len(ordered) // 2
+                    median = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+                else:
+                    median = 0.0
+                last = (
+                    datetime.fromtimestamp(int(points[-1][0]), tz=timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                    if points
+                    else None
+                )
+                summary = {
+                    "count": len(rates),
+                    "mean_rate": round(mean, 8),
+                    "median_rate": round(median, 8),
+                    "positive_pct": round(sum(1 for rate in rates if rate > 0) / len(rates) * 100, 1) if rates else 0.0,
+                    "annualized_pct": round(mean * per_day * 365 * 100, 2),
+                    "interval_hours": interval,
+                    "last": last,
+                }
+                return {
+                    "symbol": symbol,
+                    "count": len(points),
+                    "funding": points,
+                    "summary": summary,
+                    "source": "node",
+                }
         return await asyncio.to_thread(self.funding, symbol, limit=limit)
 
     def funding(self, symbol: str, *, limit: int = 300) -> dict[str, Any]:

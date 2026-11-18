@@ -4,7 +4,7 @@ import { api } from '../api'
 import { FundingChart, PriceChart } from '../components/charts'
 import { Badge, Button, Card, CardHead, ErrorNote, Skeleton, Stat } from '../components/ui'
 import { fmtCompact, fmtPct, fmtPrice, fmtRate, fmtTime, timeAgo } from '../format'
-import { useFetch } from '../hooks'
+import { useDeferredMount, useFetch, useInView } from '../hooks'
 import { useApp } from '../store'
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'] as const
@@ -12,8 +12,18 @@ const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'] as const
 export function Market() {
   const { symbol, snapshot } = useApp()
   const [span, setSpan] = useState<(typeof INTERVALS)[number]>('1h')
-  const candles = useFetch(() => api.candles({ symbol, interval: span, limit: 500 }), [symbol, span])
-  const funding = useFetch(() => api.funding({ symbol, limit: 240 }), [symbol])
+  const [limit, setLimit] = useState(180)
+  const candles = useFetch(
+    () => api.candles({ symbol, interval: span, limit }),
+    [symbol, span, limit],
+  )
+  // Funding history is below the fold: only fetch/draw it after the user scrolls near it.
+  const [fundingRef, fundingInView] = useInView<HTMLDivElement>('280px')
+  const funding = useFetch(() => api.funding({ symbol, limit: 120 }), [symbol, fundingInView], {
+    enabled: fundingInView,
+  })
+  // Paint the stat cards first, then mount the canvas chart on the next frame.
+  const chartReady = useDeferredMount(0)
   const data = candles.data
   const last = data?.candles.at(-1) ?? null
   const previous = data?.candles.at(-2) ?? null
@@ -122,14 +132,18 @@ export function Market() {
                 {fmtCompact(last?.[5] ?? null)}
               </span>
             </div>
-            <PriceChart candles={data.candles} height={400} />
+            {chartReady ? (
+              <PriceChart candles={data.candles} height={400} />
+            ) : (
+              <Skeleton className="h-[400px] w-full" />
+            )}
           </>
         ) : (
           <p className="py-16 text-center text-[12px] text-muted">该周期暂无 K 线。</p>
         )}
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+      <div ref={fundingRef} className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
         <Card>
           <CardHead
             title="资金费率历史"
@@ -146,12 +160,18 @@ export function Market() {
               ) : null
             }
           />
-          {funding.error ? (
+          {!fundingInView ? (
+            <Skeleton className="h-[200px] w-full" />
+          ) : funding.error ? (
             <ErrorNote>{funding.error}</ErrorNote>
           ) : funding.loading && !funding.data ? (
             <Skeleton className="h-[200px] w-full" />
           ) : funding.data?.points.length ? (
-            <FundingChart points={funding.data.points} height={220} />
+            chartReady ? (
+              <FundingChart points={funding.data.points} height={220} />
+            ) : (
+              <Skeleton className="h-[200px] w-full" />
+            )
           ) : (
             <p className="py-12 text-center text-[12px] text-muted">暂无资金费率数据。</p>
           )}
@@ -159,7 +179,9 @@ export function Market() {
 
         <Card>
           <CardHead title="套息快照" hint="符号约定：正值表示多头向空头支付。" />
-          {funding.data ? (
+          {!fundingInView ? (
+            <Skeleton className="h-24 w-full" />
+          ) : funding.data ? (
             <div className="grid grid-cols-2 gap-4">
               <Stat label="平均费率" value={fmtRate(funding.data.summary.mean_rate, 4)} />
               <Stat label="中位费率" value={fmtRate(funding.data.summary.median_rate, 4)} />

@@ -10,6 +10,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Message;
 import android.text.InputType;
 import android.util.Log;
 import android.util.TypedValue;
@@ -86,11 +87,9 @@ public class MainActivity extends Activity {
         String savedToken = prefs.getString("token", "").trim();
         if (savedServer.isEmpty()) savedServer = DEFAULT_SERVER;
         if (savedToken.isEmpty()) savedToken = DEFAULT_TOKEN;
-        if (savedToken.isEmpty()) {
-            showSetup();
-        } else {
-            showPanel(savedServer, savedToken);
-        }
+        // No embedded/stored token: open the web login page (Google OAuth or
+        // token fallback) instead of blocking on the native token setup screen.
+        showPanel(savedServer, savedToken);
     }
 
     private void showSetup() {
@@ -267,6 +266,8 @@ public class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        settings.setSupportMultipleWindows(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setUserAgentString(settings.getUserAgentString() + " GridtradeShell/0.1");
 
         CookieManager cookies = CookieManager.getInstance();
@@ -314,6 +315,29 @@ public class MainActivity extends Activity {
         });
 
         webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+                // target=_blank (e.g. Google device authorization) must leave the WebView:
+                // use a temporary WebView only to learn the URL, then hand it to the browser.
+                WebView probe = new WebView(MainActivity.this);
+                probe.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView ignored, WebResourceRequest request) {
+                        try {
+                            startActivity(new Intent(Intent.ACTION_VIEW, request.getUrl()));
+                        } catch (Exception error) {
+                            Log.w(TAG, "cannot open external url", error);
+                        }
+                        probe.destroy();
+                        return true;
+                    }
+                });
+                WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(probe);
+                resultMsg.sendToTarget();
+                return true;
+            }
+
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 if (progress == null) return;
@@ -391,13 +415,16 @@ public class MainActivity extends Activity {
     private void signOut() {
         prefs.edit().remove("token").apply();
         CookieManager.getInstance().removeAllCookies(null);
+        CookieManager.getInstance().flush();
         WebView current = webView;
+        String configured = prefs.getString("server", DEFAULT_SERVER).trim();
+        final String address = configured.isEmpty() ? DEFAULT_SERVER : configured;
         if (current != null) {
             current.evaluateJavascript(
                     "try{localStorage.removeItem('gridtrade.token');}catch(e){}",
-                    value -> showSetup());
+                    value -> showPanel(address, ""));
         } else {
-            showSetup();
+            showPanel(address, "");
         }
     }
 
@@ -435,6 +462,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        // Persist Google OAuth session cookies across app restarts.
+        CookieManager.getInstance().flush();
         if (webView != null) webView.onPause();
         super.onPause();
     }

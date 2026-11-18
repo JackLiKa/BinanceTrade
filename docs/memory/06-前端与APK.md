@@ -15,7 +15,7 @@
 - 图表统一 lightweight-charts v5；4 个图表组件，单页最多 **2 个图表实例**（`Overview`、`Backtest` 回放、`Market`）。
 - 状态是 Context + `useState`（无 reducer）；行情走 WebSocket，断线指数退避重连（`web/src/store.tsx:126-187`）。
 - `params.ts` 只读写 `localStorage['gridtrade.params']`，**不做 URL/hash 参数序列化**（`web/src/params.ts:18-33`）。
-- APK：`versionCode 1 / versionName **0.2.0（versionCode 2）** / minSdk 26 / targetSdk 34`；`build.sh` 用 `javac --release 17`；**无 JS 桥**（全仓无 `addJavascriptInterface`；`apk/AndroidManifest.xml:4-7`、`apk/build.sh:65`）。
+- APK：`versionCode 4 / versionName **0.3.0** / minSdk 26 / targetSdk 34`（2026-11-18 起默认不内嵌令牌，走 Google 登录）；`build.sh` 用 `javac --release 17`；**无 JS 桥**（全仓无 `addJavascriptInterface`；`apk/AndroidManifest.xml:4-7`、`apk/build.sh:65`）。
 
 ## 目录
 
@@ -107,7 +107,7 @@
 | Risk（`#/risk`） | `api.risk(...)` 20s；`api.audit(50)` 30s；`setKillSwitch`（`Risk.tsx:44-56`） | `limits.max_position_qty/max_order_notional/max_gross_notional/max_open_orders/max_submits_per_minute/max_price_deviation_bp`；`rejections[]`；`latest_run`；`audit` | kill Toggle + 确认（160-178）；参数表单（185，**不落库**）；限额推导表（78-117） | 0 |
 | Quality（`#/quality`） | `api.quality(symbol)`（`Quality.tsx:115`） | `bars/expected_bars/coverage_pct/missing_bars/last_close`、`price_min/price_max/median_gap_minutes/max_gap_minutes/gap_count/zero_volume_pct/bad_ohlc/duplicate_timestamps`、`filters.*`、`contract.*`、`funding_*`、`schedule.*` | 重新扫描（127） | 0 |
 | Settings（`#/settings`） | `api.settings()`、`api.audit(30)` 30s、`api.session()`（`Settings.tsx:47-48,69`） | `version/symbol/symbols/intervals/modes/kill_switch`、`auth.mode/token_hint/cookie`、`paths.data/var/web/web_built`、`server.host/port/cors_origins/uptime_s` | 服务器地址 `inputMode=url`、令牌 `type=password`（101-121）；保存并重连（58-77）；退出登录、kill Toggle | 0 |
-| Login（非路由） | `api.health()`（`Login.tsx:21`，server 变化时重跑） | 服务端版本提示（154-157） | 令牌 `type=password` + `autoFocus`（104-113）；服务器地址折叠（116-142） | 0 |
+| Login（非路由） | `api.health()` + `api.authProviders()`；Google Device Flow 轮询 | 服务端版本、Google 登录 code/状态 | 主按钮“使用 Google 账号登录”；令牌登录折叠为备用 | 0 |
 
 统计：12 个页面中 **4 个调用图表**（Overview、Market、Backtest、Paper），图表库统一为 `lightweight-charts`；页面最多 2 个图表实例。页面数据轮询集中在 3s（paper）到 60s（overview）。
 
@@ -279,6 +279,16 @@
 
 overview 响应字段：`env_path/token_hint/default_password/admin_username`、`paper.status/equity/symbols/config`、`live.enabled/configured/api_key_hint/trading_enabled/max_*`、`audit[{ts,action,detail}]`（199-231）。默认管理员初始密码见页面提示（`admin/index.html:66`），本文不复述。
 
+## 8.5 登录与懒加载（2026-11-18）
+
+- 登录：优先 Google OAuth Device Flow（`/api/auth/google/start|poll`），成功后服务端设置 30 天
+  `gt_token` Cookie；`AppProvider` 启动时**始终**请求 `/api/session`（Cookie 会话没有 localStorage 令牌）。
+- 静态令牌登录保留在登录页“使用访问令牌登录（备用）”。
+- 懒加载：`Market` 首屏 180 根 K 线 + “加载更多”；资金费历史/套息快照在滚动进入视口后才请求/渲染；
+  图表 `useDeferredMount` 延后挂载；每个路由包 `ErrorBoundary`，单页异常不再黑屏。
+- hooks：`useInView`、`useDeferredMount`（`web/src/hooks.ts`）；组件 `components/ErrorBoundary.tsx`。
+- 细节与根因见 [14](14-Google-OAuth与行情懒加载-2026-11-18.md)。
+
 ## 9. APK 构建
 
 `apk/AndroidManifest.xml` 关键项：
@@ -310,7 +320,9 @@ overview 响应字段：`env_path/token_hint/default_password/admin_username`、
 | 签名（91-98） | `apksigner sign --ks gridtrade.jks --ks-key-alias gridtrade --out gridtrade.apk aligned.apk` | `apk/gridtrade.apk` |
 | 校验（100-101） | `apksigner verify --print-certs` + `echo built` | 证书输出 |
 
-`.env` 机制：构建时把 `SERVER_URL`/`TOKEN` 编译进 `BuildConfig`（`apk/build.sh:37-50`），APK 首启有 token 则跳过设置页（`MainActivity.java:85-93`）；签名口令硬编码在脚本中，密钥文件不入库（需单独保管）。
+.env` 机制：构建时把 `SERVER_URL`/`TOKEN` 编译进 `BuildConfig`；**TOKEN 留空时显示登录页**（Google 登录或令牌备用）。
+`MainActivity` 将 `target=_blank` 外链交给系统浏览器，并在 `onPause` flush Cookie，保证 Google 会话跨重启。
+签名口令硬编码在脚本中，密钥文件不入库（需单独保管）。
 
 ## 10. MainActivity 结构
 
