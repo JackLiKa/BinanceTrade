@@ -29,8 +29,8 @@ fi
 OUT="$HERE/build"
 APK="$HERE/gridtrade.apk"
 KEYSTORE="$HERE/gridtrade.jks"
-VERSION_CODE="${VERSION_CODE:-5}"
-VERSION_NAME="${VERSION_NAME:-0.3.1}"
+VERSION_CODE="${VERSION_CODE:-6}"
+VERSION_NAME="${VERSION_NAME:-0.3.2}"
 
 for tool in aapt2 d8 zipalign apksigner; do
   found=""
