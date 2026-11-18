@@ -19,6 +19,7 @@ from ..domain.models import Bar, Fill, Order
 from ..execution.oms import OMS
 from ..execution.simulated import SimExecution, SimFees
 from ..risk.limits import DrawdownGuard, RiskEngine, RiskLimits
+from ..risk.liquidation import DEFAULT_MAINTENANCE_TIERS, MaintenanceTier
 from ..strategy.base import Strategy, StrategyContext
 from .dataset import Dataset
 from .metrics import compute_stats
@@ -34,6 +35,7 @@ class BacktestConfig:
     stop_dd: float | None = 0.10
     liquidation_enabled: bool = True
     liquidation_fee: float = 0.005
+    maintenance_tiers: tuple[MaintenanceTier, ...] | None = None
 
 
 @dataclass
@@ -98,6 +100,7 @@ class ReplayEngine:
             intrabar=self.config.intrabar,
             liquidation_enabled=self.config.liquidation_enabled,
             liquidation_fee=self.config.liquidation_fee,
+            maintenance_tiers=self.config.maintenance_tiers or DEFAULT_MAINTENANCE_TIERS,
         )
         first_price = float(dataset.bars["open"].iloc[0])
         self.risk = RiskEngine(risk_limits or default_risk_limits(self.config.capital, first_price))

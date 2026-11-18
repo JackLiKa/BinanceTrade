@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 import pandas as pd
 
 from ..risk.limits import RiskLimits
+from ..risk.liquidation import MaintenanceTier
 from ..strategy.grid import GridParams, GridStrategy
 from .dataset import Dataset
 from .engine import BacktestConfig, BacktestResult, ReplayEngine
@@ -30,6 +31,7 @@ class ResearchParams:
     intrabar: bool = False
     liquidation_enabled: bool = True
     liquidation_fee: float = 0.005
+    maintenance_tiers: tuple[MaintenanceTier, ...] | None = None
 
     def grid_params(self) -> GridParams:
         return GridParams(
@@ -49,6 +51,7 @@ class ResearchParams:
             stop_dd=self.stop_dd,
             liquidation_enabled=self.liquidation_enabled,
             liquidation_fee=self.liquidation_fee,
+            maintenance_tiers=self.maintenance_tiers,
         )
 
 

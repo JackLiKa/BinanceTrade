@@ -135,7 +135,7 @@ class PaperConfig:
     taker_fee_bp: float = 5.0
     slippage_bp: float = 0.2
     use_exchange_fees: bool = True
-    liquidation_fee_bp: float = 50.0
+    liquidation_fee_bp: float = 150.0
     poll_seconds: float = 3.0
 
     @classmethod
@@ -155,7 +155,7 @@ class PaperConfig:
             taker_fee_bp=_as_float("GRIDTRADE_PAPER_TAKER_FEE_BP", 5.0),
             slippage_bp=max(0.0, _as_float("GRIDTRADE_PAPER_SLIPPAGE_BP", 0.2)),
             use_exchange_fees=_env_bool("GRIDTRADE_PAPER_USE_EXCHANGE_FEES", True),
-            liquidation_fee_bp=max(0.0, _as_float("GRIDTRADE_PAPER_LIQUIDATION_FEE_BP", 50.0)),
+            liquidation_fee_bp=max(0.0, _as_float("GRIDTRADE_PAPER_LIQUIDATION_FEE_BP", 150.0)),
             poll_seconds=max(1.0, _as_float("GRIDTRADE_PAPER_POLL_SECONDS", 3.0)),
         )
 

@@ -23,7 +23,12 @@ from typing import Any, Protocol
 import httpx
 
 from ..strategy.costs import CostModel
-from ..risk.liquidation import maintenance_margin
+from ..risk.liquidation import (
+    DEFAULT_MAINTENANCE_TIERS,
+    MaintenanceTier,
+    maintenance_margin,
+    tiers_from_brackets,
+)
 from .config import PaperConfig
 
 _EPS = 1e-9
@@ -265,6 +270,11 @@ class NodeFeed:
             rows.append(item)
         return rows
 
+    def leverage_bracket(self, symbol: str) -> tuple[MaintenanceTier, ...] | None:
+        payload = self._get("/market/leverage-bracket", {"symbol": self._binance(symbol)})
+        rows = payload.get("brackets") or []
+        return tiers_from_brackets(rows) if rows else None
+
     def funding(self, symbol: str, limit: int = 10) -> list[dict[str, Any]]:
         payload = self._get(
             "/market/funding", {"symbol": self._binance(symbol), "limit": limit}
@@ -299,6 +309,8 @@ class SymbolState:
     slippage: float = 0.0
     funding_next: int | None = None
     funding_interval: int = 28_800
+    maintenance_tiers: tuple[MaintenanceTier, ...] = DEFAULT_MAINTENANCE_TIERS
+    liquidation_fee_bp: float = 150.0
 
     def grid(self) -> tuple[float, float]:
         if self.unit <= 0:
@@ -655,6 +667,16 @@ class PaperEngine:
     def _gross(self) -> float:
         return sum(abs(state.position) * state.mark for state in self.state.values())
 
+    @staticmethod
+    def _resolve_tiers(feed: Feed, symbol: str) -> tuple[MaintenanceTier, ...]:
+        """Use the exchange's real bracket; fall back safely if unavailable."""
+        if not isinstance(feed, NodeFeed):
+            return DEFAULT_MAINTENANCE_TIERS
+        try:
+            return feed.leverage_bracket(symbol) or DEFAULT_MAINTENANCE_TIERS
+        except Exception:  # noqa: BLE001 - optional exchange detail
+            return DEFAULT_MAINTENANCE_TIERS
+
     def _mark_equity(self) -> None:
         unrealized = sum(state.unrealized for state in self.state.values())
         self.gross = self._gross()
@@ -668,7 +690,9 @@ class PaperEngine:
             if abs(state.position) <= _EPS:
                 continue
             wallet += state.position * state.avg_entry
-            maintenance += maintenance_margin(abs(state.position) * state.mark)
+            maintenance += maintenance_margin(
+                abs(state.position) * state.mark, state.maintenance_tiers
+            )
         self.wallet_balance = wallet
         self.maintenance_margin = maintenance
 
@@ -698,7 +722,7 @@ class PaperEngine:
             notional = qty * state.mark
             side = "SELL" if state.position > 0 else "BUY"
             self._fill(state, side, state.mark, qty, self._taker_rate(state), "liquidation", now)
-            fee = notional * max(0.0, self.config.liquidation_fee_bp) / 1e4
+            fee = notional * max(0.0, state.liquidation_fee_bp) / 1e4
             self.account.cash -= fee
             self.account.fees += fee
             fees += fee
@@ -814,6 +838,12 @@ class PaperEngine:
                 taker_fee=taker_fee,
                 funding_next=int(contract.get("funding_next_apply") or 0) or None,
                 funding_interval=int(contract.get("funding_interval") or 28_800),
+                maintenance_tiers=self._resolve_tiers(feed, symbol),
+                liquidation_fee_bp=(
+                    float(contract.get("liquidation_fee") or 0.0) * 1e4
+                    if float(contract.get("liquidation_fee") or 0.0) > 0
+                    else self.config.liquidation_fee_bp
+                ),
             )
         self.state = states
         self.account = PortfolioAccount(cash=float(cfg.capital), peak_equity=float(cfg.capital))
@@ -1140,7 +1170,7 @@ class PaperEngine:
             unrealized = sum(state.unrealized for state in self.state.values())
             wallet = account.cash + sum(state.position * state.avg_entry for state in self.state.values())
             maintenance = sum(
-                maintenance_margin(abs(state.position) * state.mark)
+                maintenance_margin(abs(state.position) * state.mark, state.maintenance_tiers)
                 for state in self.state.values()
                 if abs(state.position) > _EPS
             )
@@ -1175,6 +1205,10 @@ class PaperEngine:
                         "taker_fee_bp": (state.taker_fee if state.taker_fee is not None else self.config.taker_fee_bp / 1e4) * 1e4,
                         "fee_source": "exchange" if state.maker_fee is not None else "config",
                         "slippage": state.slippage,
+                        "maintenance_margin": maintenance_margin(
+                            abs(state.position) * state.mark, state.maintenance_tiers
+                        ),
+                        "liquidation_fee_bp": state.liquidation_fee_bp,
                     }
                 )
             with self._connect() as conn:

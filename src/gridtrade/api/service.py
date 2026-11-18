@@ -11,15 +11,17 @@ import asyncio
 import math
 import threading
 from collections import Counter, defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import httpx
 import numpy as np
 import pandas as pd
 
 from ..research.dataset import Dataset
+from ..risk.liquidation import MaintenanceTier, tiers_from_brackets
 from ..research.runner import (
     ResearchParams,
     risk_limits_for,
@@ -80,6 +82,48 @@ class ResearchService:
 
     def symbols(self) -> list[str]:
         return sorted(path.name[: -len("_1m.parquet")] for path in self.data_dir.glob("*_1m.parquet"))
+
+    def _binance_risk(self, symbol: str, params: ResearchParams) -> ResearchParams:
+        """Use the symbol's real Binance leverage bracket/fee when reachable.
+
+        If the Tokyo node is unavailable, keep the fallback bracket and make the
+        artifact's params show that no live bracket was applied.
+        """
+        if not self.live.node_url:
+            return params
+        try:
+            with httpx.Client(
+                base_url=self.live.node_url,
+                timeout=httpx.Timeout(6.0, connect=2.0),
+                headers={"User-Agent": "gridtrade/0.1 research-risk"},
+            ) as client:
+                bracket_response = client.get(
+                    "/market/leverage-bracket", params={"symbol": symbol}
+                )
+                bracket_response.raise_for_status()
+                bracket_payload = bracket_response.json()
+                rows = bracket_payload.get("brackets") or []
+                tiers = tiers_from_brackets(rows)
+                fee = params.liquidation_fee
+                try:
+                    contract_response = client.get(
+                        "/market/contract", params={"symbol": symbol}
+                    )
+                    contract_response.raise_for_status()
+                    raw_fee = (contract_response.json() or {}).get("liquidation_fee")
+                    if raw_fee is not None and float(raw_fee) >= 0:
+                        fee = float(raw_fee)
+                except (ValueError, TypeError, httpx.HTTPError):
+                    pass
+                if rows:
+                    return replace(
+                        params,
+                        maintenance_tiers=tiers,
+                        liquidation_fee=fee,
+                    )
+        except (ValueError, TypeError, httpx.HTTPError):
+            return params
+        return params
 
     def _mtime(self, symbol: str) -> float:
         stamps = []
@@ -380,9 +424,10 @@ class ResearchService:
             progress(0.05, "loading dataset")
             dataset = self._slice(symbol, start, end)
             progress(0.12, f"{len(dataset.bars):,} bars")
-            result = run_replay(dataset, params)
+            risk_params = self._binance_risk(dataset.symbol, params)
+            result = run_replay(dataset, risk_params)
             progress(0.82, "packing artifacts")
-            artifact = replay_artifact(dataset, params, result, started)
+            artifact = replay_artifact(dataset, risk_params, result, started)
             progress(0.95, "writing")
             return artifact
 
@@ -400,14 +445,15 @@ class ResearchService:
             started = datetime.now(timezone.utc)
             progress(0.04, "loading dataset")
             dataset = self._slice(symbol, start, end)
+            risk_params = self._binance_risk(dataset.symbol, params)
             report = walkforward(
                 dataset,
-                params,
+                risk_params,
                 min_days=min_days,
                 progress=lambda value, message: progress(0.05 + value * 0.82, message),
             )
             progress(0.9, "packing artifacts")
-            return walkforward_artifact(dataset, params, report, min_days, started)
+            return walkforward_artifact(dataset, risk_params, report, min_days, started)
 
         return run
 

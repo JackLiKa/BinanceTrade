@@ -13,6 +13,7 @@ from gridtrade.risk.liquidation import (
     DEFAULT_MAINTENANCE_TIERS,
     liquidation_price,
     maintenance_margin,
+    tiers_from_brackets,
 )
 import pandas as pd
 
@@ -32,12 +33,12 @@ def bar(open_: float, high: float, low: float, close: float) -> Bar:
 
 
 def test_maintenance_margin_tiers_are_positive_and_capped_by_equity_formula() -> None:
-    assert maintenance_margin(1_000.0) == pytest.approx(25.0)
+    assert maintenance_margin(1_000.0) == pytest.approx(10.0)
     assert maintenance_margin(0.0) == 0.0
     # Tier 2 uses the cumulative Binance maintenance amount.
-    assert maintenance_margin(100_000.0) == pytest.approx(2_750.0)
-    assert liquidation_price(1, 1.0, 100.0, 10.0) == pytest.approx(92.3076923077, rel=1e-8)
-    assert liquidation_price(-1, 1.0, 100.0, 10.0) == pytest.approx(107.3170731707, rel=1e-8)
+    assert maintenance_margin(100_000.0) == pytest.approx(1_500.0)
+    assert liquidation_price(1, 1.0, 100.0, 10.0) == pytest.approx(90.9090909091, rel=1e-8)
+    assert liquidation_price(-1, 1.0, 100.0, 10.0) == pytest.approx(108.9108910891, rel=1e-8)
 
 
 def test_long_position_is_force_closed_and_cannot_keep_trading() -> None:
@@ -148,3 +149,17 @@ def test_paper_engine_force_liquidates_shared_margin(tmp_path) -> None:
     snap = engine.snapshot()
     assert snap["liquidation"] is not None
     assert snap["account"]["maintenance_margin"] == 0.0
+
+
+def test_binance_leverage_bracket_maps_to_tiers() -> None:
+    rows = [
+        {"bracket": 1, "notional_cap": 50_000, "mmr": 0.01, "cum": 0.0},
+        {"bracket": 2, "notional_cap": 200_000, "mmr": 0.02, "cum": 500.0},
+    ]
+    tiers = tiers_from_brackets(rows)
+    assert tiers[0].notional_cap == 50_000
+    assert tiers[0].mmr == 0.01
+    assert tiers[0].maintenance_amount == 0.0
+    assert tiers[1].mmr == 0.02
+    assert tiers[1].maintenance_amount == 500.0
+    assert tiers[-1].notional_cap < float("inf")  # JSON-safe

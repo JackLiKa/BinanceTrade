@@ -177,6 +177,30 @@ class Handler(BaseHTTPRequestHandler):
                         },
                     )
                     return
+                if route == "/market/leverage-bracket":
+                    sym = (symbol or "BTCUSDT").upper()
+                    payload = client._request(
+                        "GET", "/fapi/v1/leverageBracket", {"symbol": sym}, signed=True
+                    )
+                    rows = payload if isinstance(payload, list) else payload.get("symbols", [])
+                    item = rows[0] if rows else {}
+                    brackets = item.get("brackets") or []
+                    normalized = [
+                        {
+                            "bracket": int(b.get("bracket") or index + 1),
+                            "initial_leverage": int(b.get("initialLeverage") or 0),
+                            "notional_floor": float(b.get("notionalFloor") or 0.0),
+                            "notional_cap": float(b.get("notionalCap") or 0.0),
+                            "mmr": float(b.get("maintMarginRatio") or 0.0),
+                            "cum": float(b.get("cum") or 0.0),
+                        }
+                        for index, b in enumerate(brackets)
+                    ]
+                    self._send(
+                        HTTPStatus.OK,
+                        {"ok": True, "symbol": sym, "brackets": normalized},
+                    )
+                    return
                 if route == "/market/contract":
                     sym = (symbol or "BTCUSDT").upper()
                     filt = client.symbol_filters(sym)
@@ -196,7 +220,13 @@ class Handler(BaseHTTPRequestHandler):
                             "taker_fee_rate": taker_bp / 10_000.0,
                             "funding_next_apply": next_ms // 1000 if next_ms else 0,
                             "funding_interval": 28_800,
-                            "exchange": "binance",
+                            "liquidation_fee": float(
+                        (client.exchange_info(sym).get("symbols") or [{}])[0].get(
+                            "liquidationFee", 0.0
+                        )
+                        or 0.0
+                    ),
+                    "exchange": "binance",
                         },
                     )
                     return

@@ -37,6 +37,7 @@ BINANCE_FAPI = {
     "/fapi/v1/order": "Binance USDⓈ-M Futures · New/Query/Cancel Order",
     "/fapi/v1/allOpenOrders": "Binance USDⓈ-M Futures · Cancel All Open Orders",
     "/fapi/v1/leverage": "Binance USDⓈ-M Futures · Change Initial Leverage",
+    "/fapi/v1/leverageBracket": "Binance USDⓈ-M Futures · Notional and Leverage Brackets",
 }
 
 GATE_FUTURES = {

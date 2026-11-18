@@ -37,15 +37,39 @@ class MaintenanceTier:
     maintenance_amount: float = 0.0
 
 
-# Conservative low-notional USDT-M brackets.  Tier 1 is 2.5%, which is stricter
-# than BTCUSDT but appropriate for the tokenized-equity perps used here.
+# Fallback table copied from Binance's low-notional bracket shape (the
+# GOOGLUSDT bracket observed on 2026-11-18).  The API path should replace it
+# with the live ``/fapi/v1/leverageBracket`` response for the actual symbol.
 DEFAULT_MAINTENANCE_TIERS: tuple[MaintenanceTier, ...] = (
-    MaintenanceTier(50_000.0, 0.025, 0.0),
-    MaintenanceTier(100_000.0, 0.030, 250.0),
-    MaintenanceTier(500_000.0, 0.050, 2_250.0),
-    MaintenanceTier(1_000_000.0, 0.100, 27_250.0),
-    MaintenanceTier(math.inf, 0.125, 52_250.0),
+    MaintenanceTier(50_000.0, 0.010, 0.0),
+    MaintenanceTier(200_000.0, 0.020, 500.0),
+    MaintenanceTier(400_000.0, 0.025, 1_500.0),
+    MaintenanceTier(1_000_000.0, 0.0333, 4_820.0),
+    MaintenanceTier(5_000_000.0, 0.050, 21_520.0),
+    MaintenanceTier(15_000_000.0, 0.100, 271_520.0),
+    MaintenanceTier(1e18, 0.250, 2_521_520.0),
 )
+
+
+def tiers_from_brackets(rows: list[dict]) -> tuple[MaintenanceTier, ...]:
+    """Convert Binance ``/fapi/v1/leverageBracket`` rows to our tier table."""
+    tiers: list[MaintenanceTier] = []
+    for row in rows:
+        try:
+            cap = float(row.get("notional_cap", row.get("notionalCap", 0)) or 0)
+            mmr = float(row.get("mmr", row.get("maintMarginRatio", 0)) or 0)
+            cum = float(row.get("cum", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if mmr <= 0:
+            continue
+        tiers.append(MaintenanceTier(cap if cap > 0 else 1e18, mmr, cum))
+    if not tiers:
+        return DEFAULT_MAINTENANCE_TIERS
+    tiers.sort(key=lambda tier: tier.notional_cap)
+    if tiers[-1].notional_cap < 1e17:
+        tiers.append(MaintenanceTier(1e18, tiers[-1].mmr, tiers[-1].maintenance_amount))
+    return tuple(tiers)
 
 
 def select_tier(notional: float, tiers: tuple[MaintenanceTier, ...] = DEFAULT_MAINTENANCE_TIERS) -> MaintenanceTier:
