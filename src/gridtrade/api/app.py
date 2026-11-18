@@ -41,7 +41,13 @@ from .jobs import JobQueue
 from .live import LiveMarket
 from .admin import ADMIN_COOKIE, SESSION_TTL, AdminError, AdminService, AdminAuth
 from urllib.parse import parse_qs, quote, urlencode
-from .tw_auth import TwAuthStore, login_page, safe_next, set_password_page
+from .tw_auth import (
+    TwAuthStore,
+    change_password_page,
+    login_page,
+    safe_next,
+    set_password_page,
+)
 from .google_auth import (
     GoogleAuthError,
     GoogleAuthStore,
@@ -494,6 +500,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def tw_login_page(request: Request, next: str = "/TradingWorkstation") -> HTMLResponse:
         error = request.query_params.get("error", "")
         return HTMLResponse(login_page(next_path=next, error=error))
+
+    @app.get("/__tw_auth/change-password", response_class=HTMLResponse, include_in_schema=False)
+    async def tw_change_password_page(request: Request, next: str = "/TradingWorkstation") -> HTMLResponse:
+        email = tw_store.session_email(request.cookies.get("tw_session", ""))
+        if email is None:
+            return HTMLResponse(login_page(next_path=next, error="请先登录后再修改密码"))
+        return HTMLResponse(change_password_page(email=email, next_path=next))
+
+    @app.post("/__tw_auth/change-password", include_in_schema=False)
+    async def tw_change_password(request: Request, response: Response) -> RedirectResponse:
+        email = tw_store.session_email(request.cookies.get("tw_session", ""))
+        if email is None:
+            return RedirectResponse("/__tw_auth/login?error=" + urlencode({"": "请先登录"})[1:], status_code=302)
+        fields = await form_fields(request)
+        current = fields.get("current", "")
+        new = fields.get("new", "")
+        new2 = fields.get("new2", "")
+        next_path = safe_next(fields.get("next"))
+        if len(new) < 8:
+            return RedirectResponse(
+                f"/__tw_auth/change-password?next={quote(next_path)}&error=" + urlencode({"": "新密码至少 8 位"})[1:],
+                status_code=302,
+            )
+        if new != new2:
+            return RedirectResponse(
+                f"/__tw_auth/change-password?next={quote(next_path)}&error=" + urlencode({"": "两次新密码不一致"})[1:],
+                status_code=302,
+            )
+        if not tw_store.change_password(email, current, new):
+            return RedirectResponse(
+                f"/__tw_auth/change-password?next={quote(next_path)}&error=" + urlencode({"": "当前密码不正确"})[1:],
+                status_code=302,
+            )
+        return RedirectResponse(
+            f"/__tw_auth/change-password?next={quote(next_path)}&ok=" + urlencode({"": "密码已更新"})[1:],
+            status_code=302,
+        )
 
     @app.post("/__tw_auth/login", include_in_schema=False)
     async def tw_password_login(request: Request, response: Response) -> RedirectResponse:

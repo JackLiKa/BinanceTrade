@@ -15,6 +15,11 @@
   2. **账号密码**：首次必须先用 Gmail 登录，然后进入“创建登录密码”（至少 8 位，两次一致）；之后可用邮箱+密码登录。
 - 会话 Cookie：`tw_session`，30 天，httpOnly，SameSite=Lax，Secure。
 - 退出：`/__tw_auth/logout`。
+- **修改密码**：`/__tw_auth/change-password`（登录后可用，所有用户均可改）；TradingWorkstation 页面右下角注入“修改密码 · 退出”悬浮入口。
+- 其他路由：
+  - `/admin` → `https://gt.jacklika.com/admin`（后台管理）
+  - `/grafana` → `http://81.71.71.131:3000/`（Grafana）
+  - `/account` → 修改密码页
 
 ## 2. 实现
 
@@ -49,7 +54,10 @@
 - 登录页返回 200，包含 Gmail 按钮与账号密码表单
 - Gmail start 302 到 Google，redirect_uri 为 `https://tw.jacklika.com/__tw_auth/google/callback`
 - 独立 Web 客户端未配置时，明确返回登录页错误，不回退到 gt 客户端
-- 用临时账号密码验证：POST 登录设置 `tw_session` → `/__tw_auth/check` 204 → `/TradingWorkstation` 200；验证后已删除测试账号
+- 用临时账号密码验证：POST 登录设置 `tw_session` → `/__tw_auth/check` 204 → `/TradingWorkstation` 200
+- 修改密码验证：旧密码登录失败、新密码登录成功；测试账号已删除
+- `/admin` 302 到 gt 后台；`/grafana` 302 到 Grafana；`/account` 302 到修改密码页
+- 受保护页面 HTML 注入账号悬浮入口（修改密码/退出）
 - nginx `nginx -t` 通过；无回环/worker 耗尽
 
 ## 4. 注意

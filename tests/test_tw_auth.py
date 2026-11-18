@@ -45,3 +45,13 @@ def test_safe_next_rejects_absolute_and_protocol_relative() -> None:
     assert safe_next("/TradingWorkstation") == "/TradingWorkstation"
     assert safe_next("https://evil.example") == "/TradingWorkstation"
     assert safe_next("//evil.example") == "/TradingWorkstation"
+
+
+def test_change_password(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    store.set_password("040418jie@gmail.com", "OldPass123")
+    assert store.change_password("040418jie@gmail.com", "wrong", "NewPass123") is False
+    assert store.verify("040418jie@gmail.com", "OldPass123") is True
+    assert store.change_password("040418jie@gmail.com", "OldPass123", "NewPass123") is True
+    assert store.verify("040418jie@gmail.com", "OldPass123") is False
+    assert store.verify("040418jie@gmail.com", "NewPass123") is True

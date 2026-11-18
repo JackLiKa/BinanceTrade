@@ -108,6 +108,12 @@ class TwAuthStore:
             return False
         return hmac.compare_digest(_hash(password, row["salt"]), row["password_hash"])
 
+    def change_password(self, email: str, current: str, new: str) -> bool:
+        if not self.verify(email, current):
+            return False
+        self.set_password(email, new)
+        return True
+
     def create_session(self, email: str) -> str:
         token = secrets.token_urlsafe(32)
         now = time.time()
@@ -237,4 +243,32 @@ button{{width:100%;height:40px;margin-top:16px;border:0;border-radius:8px;backgr
 <label>新密码（至少 8 位）</label><input name="password" type="password" minlength="8" required>
 <label>确认密码</label><input name="password2" type="password" minlength="8" required>
 <button type="submit">创建密码并登录</button>
+</form></body></html>"""
+
+
+def change_password_page(*, email: str, next_path: str = "/TradingWorkstation", error: str = "", ok: str = "") -> str:
+    next_value = html.escape(safe_next(next_path), quote=True)
+    email_value = html.escape(email, quote=True)
+    notice = f'<div class="ok">{html.escape(ok)}</div>' if ok else ""
+    error_html = f'<div class="err">{html.escape(error)}</div>' if error else ""
+    return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>修改密码</title>
+<style>
+body{{margin:0;background:#0b0e11;color:#eaecef;font:14px/1.5 -apple-system,"Segoe UI","PingFang SC",sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}}
+.box{{width:min(400px,calc(100vw - 32px));background:#151a21;border:1px solid #2b3139;border-radius:16px;padding:26px}}
+h1{{font-size:18px;margin:0 0 4px}} p{{color:#848e9c;font-size:12px;margin:0 0 14px}}
+label{{display:block;font-size:12px;color:#848e9c;margin:12px 0 5px}}
+input{{width:100%;height:38px;border-radius:8px;border:1px solid #2b3139;background:#1c222b;color:#eaecef;padding:0 10px;box-sizing:border-box}}
+button{{width:100%;height:40px;margin-top:16px;border:0;border-radius:8px;background:#fcd535;color:#0b0e11;font-weight:700;font-size:13px;cursor:pointer}}
+a{{display:block;text-align:center;margin-top:12px;color:#fcd535;font-size:12px;text-decoration:none}}
+.err{{background:#2a1216;border:1px solid #5c2029;color:#f6465d;padding:8px 10px;border-radius:8px;font-size:12px;margin:10px 0}}
+.ok{{background:#0f2119;border:1px solid #0ecb81;color:#7ce5b6;padding:8px 10px;border-radius:8px;font-size:12px;margin:10px 0}}
+</style></head><body><form class="box" method="post" action="/__tw_auth/change-password">
+<h1>修改登录密码</h1><p>{email_value}</p>{notice}{error_html}
+<input type="hidden" name="next" value="{next_value}">
+<label>当前密码</label><input name="current" type="password" autocomplete="current-password" required>
+<label>新密码（至少 8 位）</label><input name="new" type="password" minlength="8" required>
+<label>确认新密码</label><input name="new2" type="password" minlength="8" required>
+<button type="submit">保存新密码</button>
+<a href="{next_value}">返回 TradingWorkstation</a>
 </form></body></html>"""

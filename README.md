@@ -288,7 +288,7 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 165 项
+.venv/bin/python -m pytest            # 166 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 

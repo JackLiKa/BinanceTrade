@@ -15,7 +15,7 @@
 | 代码量 | Python `src/gridtrade` 约 5,400 行；前端 `web/src` 约 7,100 行；`MainActivity.java` 538 行 |
 | 页面 | **12 条 hash 路由** + 独立管理后台 `/admin` + Swagger `/api/docs` + `/ws` |
 | 接口 | **46 个路由装饰器** = 45 条 HTTP（43 进 OpenAPI：44 path / 45 operation）+ 1 条 WebSocket |
-| 测试 | pytest **165 项**（含 Google 标准/设备流/后台权限 8 项；POSIX 全绿） |
+| 测试 | pytest **166 项**（含 Google 标准/设备流/后台权限 8 项；POSIX 全绿） |
 | 线上 | **https://gt.jacklika.com**（Cloudflare Tunnel + HTTPS）；8000 已关闭 |
 | 实盘 | Gate USDT 永续**只读分析可用**；下单代码完备但**默认锁定**（未启用 409 / 未解锁 403） |
 | 认证 | 面板：静态令牌 **或** Google 白名单会话；后台：Google（需“后台”标记）或 `admin` 密码 |
