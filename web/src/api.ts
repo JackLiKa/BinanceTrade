@@ -202,6 +202,7 @@ export interface PaperState {
     realized: number
     fees: number
     funding: number
+    funding_income?: number
     slippage: number
     gross_notional: number
     margin_used: number
@@ -514,6 +515,7 @@ export interface MonthRow {
   trades: number
   fees: number
   funding: number | null
+  funding_income?: number
   halted: boolean
 }
 

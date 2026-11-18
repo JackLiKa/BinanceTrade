@@ -1309,6 +1309,7 @@ class PaperEngine:
                     "realized": account.realized,
                     "fees": account.fees,
                     "funding": account.funding,
+                    "funding_income": -account.funding,
                     "slippage": account.slippage,
                     "gross_notional": self.gross,
                     "margin_used": self.gross / max(1.0, self.config.leverage),

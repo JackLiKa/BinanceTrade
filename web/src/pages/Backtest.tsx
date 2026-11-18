@@ -109,10 +109,10 @@ function StatBlock({ artifact }: { artifact: ReplayArtifact }) {
       <Stat label="成交" value={fmtMoney(summary.trades, 0)} sub={`换手 ${fmtMoney(summary.turnover_x ?? 0)}x`} />
       <Stat label="手续费" value={`$${fmtMoney(summary.fees)}`} sub="挂单 + 吃单" />
       <Stat
-        label="资金费"
-        value={`${summary.funding >= 0 ? '−' : '+'}$${fmtMoney(Math.abs(summary.funding))}`}
-        tone={summary.funding <= 0 ? 1 : -1}
-        sub="正数=支出 / 负数=收入"
+        label="资金费收益"
+        value={`${Number(summary.funding_income ?? -summary.funding) >= 0 ? '+' : '−'}$${fmtMoney(Math.abs(Number(summary.funding_income ?? -summary.funding)))}`}
+        tone={Number(summary.funding_income ?? -summary.funding) >= 0 ? 1 : -1}
+        sub="正数=赚 / 负数=亏"
       />
       {Number(summary.bad_debt ?? 0) > 0 ? (
         <>
@@ -147,7 +147,7 @@ function MonthlyTable({ rows }: { rows: ReplayArtifact['months'] }) {
     (acc, row) => ({
       trades: acc.trades + row.trades,
       fees: acc.fees + row.fees,
-      funding: acc.funding + (row.funding ?? 0),
+      funding: acc.funding + (row.funding_income ?? -(row.funding ?? 0)),
     }),
     { trades: 0, fees: 0, funding: 0 },
   )
@@ -162,7 +162,7 @@ function MonthlyTable({ rows }: { rows: ReplayArtifact['months'] }) {
             <th className="pb-2 text-right font-medium">最大回撤</th>
             <th className="pb-2 text-right font-medium">成交</th>
             <th className="pb-2 text-right font-medium">手续费</th>
-            <th className="pb-2 text-right font-medium">资金费率</th>
+            <th className="pb-2 text-right font-medium">资金费收益</th>
             <th className="pb-2 text-right font-medium">状态</th>
           </tr>
         </thead>
@@ -179,10 +179,12 @@ function MonthlyTable({ rows }: { rows: ReplayArtifact['months'] }) {
               <td
                 className={cx(
                   'py-1.5 text-right font-mono',
-                  row.funding === null ? 'text-faint' : row.funding <= 0 ? 'text-up' : 'text-down',
+                  row.funding_income == null && row.funding == null ? 'text-faint' : (row.funding_income ?? -(row.funding ?? 0)) >= 0 ? 'text-up' : 'text-down',
                 )}
               >
-                {row.funding === null ? '—' : `${row.funding <= 0 ? '+' : '−'}$${fmtMoney(Math.abs(row.funding))}`}
+                {row.funding_income == null && row.funding == null
+                  ? '—'
+                  : `${(row.funding_income ?? -(row.funding ?? 0)) >= 0 ? '+' : '−'}$${fmtMoney(Math.abs(row.funding_income ?? -(row.funding ?? 0)))}`}
               </td>
               <td className="py-1.5 text-right">
                 {row.halted ? <Badge tone="down">已停止</Badge> : <span className="text-faint">—</span>}
@@ -198,7 +200,7 @@ function MonthlyTable({ rows }: { rows: ReplayArtifact['months'] }) {
             <td className="py-2 text-right font-mono text-ink">{totals.trades}</td>
             <td className="py-2 text-right font-mono text-ink">${fmtMoney(totals.fees)}</td>
             <td className="py-2 text-right font-mono text-ink">
-              {totals.funding <= 0 ? '+' : '−'}${fmtMoney(Math.abs(totals.funding))}
+              {totals.funding >= 0 ? '+' : '−'}${fmtMoney(Math.abs(totals.funding))}
             </td>
             <td />
           </tr>
@@ -235,7 +237,10 @@ function ReplayView({ artifact }: { artifact: ReplayArtifact }) {
               ) : (
                 <Badge tone="up">已完成</Badge>
               )}
-              <Badge tone="neutral">{fmtQty(artifact.summary.final_position ?? 0, 4)} 期末持仓</Badge>
+              <Badge tone={(artifact.summary.final_position ?? 0) !== 0 ? 'warn' : 'neutral'}>
+                {fmtQty(artifact.summary.final_position ?? 0, 4)} 期末持仓
+                {(artifact.summary.final_position ?? 0) !== 0 ? '（未平仓）' : ''}
+              </Badge>
             </div>
           }
         />
@@ -252,7 +257,7 @@ function ReplayView({ artifact }: { artifact: ReplayArtifact }) {
 
       <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
         <Card>
-          <CardHead title="月度归因" hint="手续费与资金费率按现金流方向计正负。" />
+          <CardHead title="月度归因" hint="资金费收益正数=赚、负数=亏；成交为 0 的月份收益来自持仓市值变化。" />
           <MonthlyTable rows={artifact.months} />
         </Card>
 

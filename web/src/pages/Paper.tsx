@@ -209,7 +209,7 @@ export function Paper() {
           <Stat
             label="成本"
             value={`$${fmtMoney(account.fees + account.funding + (account.slippage ?? 0), 3)}`}
-            sub={`手续费 ${fmtMoney(account.fees, 3)} · 资金费 ${fmtMoney(account.funding, 3)} · 滑点 ${fmtMoney(account.slippage ?? 0, 3)}`}
+            sub={`手续费 ${fmtMoney(account.fees, 3)} · 资金费收益 ${fmtMoney(account.funding_income ?? -account.funding, 3)} · 滑点 ${fmtMoney(account.slippage ?? 0, 3)}`}
           />
         </div>
         {data.liquidation ? (

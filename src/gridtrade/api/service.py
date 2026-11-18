@@ -585,6 +585,7 @@ def _month_rows(result, capital: float) -> list[dict[str, Any]]:
                 "trades": int(trades),
                 "fees": round(fees, 2),
                 "funding": round(funding.get(key, 0.0), 2),
+                "funding_income": round(-funding.get(key, 0.0), 2),
                 "halted": bool(result.halted and position == len(periods) - 1),
             }
         )
