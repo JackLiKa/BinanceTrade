@@ -541,6 +541,10 @@ class PaperEngine:
             self._check_liquidation(now)
             if self.status == "running":
                 self._check_stop()
+            # A successful full tick proves the transient node/network error is
+            # gone.  Do not keep showing a stale "Connection refused" forever.
+            if self.status == "running":
+                self.last_error = None
             self._save()
             self._snapshot_if_due(now)
 
