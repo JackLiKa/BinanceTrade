@@ -313,6 +313,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         relay_token=settings.google_relay_token,
     )
     tw_store = TwAuthStore(settings.var_dir / "tw_auth.db", settings.tw_allowed_emails)
+    tw_google = GoogleWebOAuth(
+        google_store,
+        relay_url=settings.google_relay_url,
+        relay_token=settings.google_relay_token,
+        client_id=settings.tw_google_client_id,
+        client_secret=settings.tw_google_client_secret,
+        allow_store_fallback=False,
+    )
     started_at = time.time()
 
     @asynccontextmanager
@@ -519,14 +527,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def tw_google_start(request: Request, next: str = "/TradingWorkstation") -> RedirectResponse:
         try:
             url = await asyncio.to_thread(
-                google_web.start,
-                redirect_uri=f"{settings.public_url}/api/auth/google/callback",
+                tw_google.start,
+                redirect_uri=f"{settings.tw_public_url}/__tw_auth/google/callback",
                 purpose="tw",
                 next_path=safe_next(next),
             )
         except GoogleWebError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+            return RedirectResponse(
+                "/__tw_auth/login?error=" + urlencode({"": exc.message})[1:],
+                status_code=302,
+            )
         return RedirectResponse(url, status_code=302)
+
+    @app.get("/__tw_auth/google/callback", include_in_schema=False)
+    async def tw_google_callback(code: str = "", state: str = "") -> RedirectResponse:
+        if not code or not state:
+            return RedirectResponse("/__tw_auth/login?error=" + urlencode({"": "Google 回调缺少参数"})[1:], status_code=302)
+        try:
+            result = await asyncio.to_thread(tw_google.exchange, code, state)
+        except GoogleWebError as exc:
+            return RedirectResponse("/__tw_auth/login?error=" + urlencode({"": exc.message})[1:], status_code=302)
+        email = result["email"]
+        if not tw_store.allowed_email(email):
+            return RedirectResponse(
+                "/__tw_auth/login?error=" + urlencode({"": f"{email} 不在允许登录名单中"})[1:],
+                status_code=302,
+            )
+        target = safe_next(result.get("next"))
+        if not tw_store.has_password(email):
+            pending = tw_store.create_pending(email, target)
+            return RedirectResponse(
+                f"/__tw_auth/set-password?token={quote(pending)}&next={quote(target)}",
+                status_code=302,
+            )
+        login_code = tw_store.create_code(email, target)
+        return RedirectResponse(
+            f"/__tw_auth/google/return?code={quote(login_code)}",
+            status_code=302,
+        )
 
     @app.get("/__tw_auth/google/return", include_in_schema=False)
     async def tw_google_return(request: Request, response: Response, code: str = "", next: str = "/TradingWorkstation") -> RedirectResponse:

@@ -521,13 +521,33 @@ class GoogleWebOAuth:
     https://gt.jacklika.com). Google's account chooser appears directly.
     """
 
-    def __init__(self, store: GoogleAuthStore, client: httpx.Client | None = None, *, relay_url: str = "", relay_token: str = "") -> None:
+    def __init__(
+        self,
+        store: GoogleAuthStore,
+        client: httpx.Client | None = None,
+        *,
+        relay_url: str = "",
+        relay_token: str = "",
+        client_id: str = "",
+        client_secret: str = "",
+        allow_store_fallback: bool = True,
+    ) -> None:
         self.store = store
         self._client = client
         self.relay_url = relay_url.rstrip("/")
         self.relay_token = relay_token
+        self._client_id_override = client_id.strip()
+        self._client_secret_override = client_secret.strip()
+        self._allow_store_fallback = allow_store_fallback
         self._lock = threading.RLock()
         self._states: dict[str, dict[str, Any]] = {}
+
+    def _web_credentials(self) -> tuple[str, str]:
+        if self._client_id_override and self._client_secret_override:
+            return self._client_id_override, self._client_secret_override
+        if not self._allow_store_fallback:
+            return "", ""
+        return self.store.web_config()
 
     def _http(self) -> httpx.Client:
         if self._client is None:
@@ -544,7 +564,7 @@ class GoogleWebOAuth:
         return {"X-Relay-Token": self.relay_token} if self.relay_token else {}
 
     def start(self, *, redirect_uri: str, purpose: str, next_path: str, app: bool = False) -> str:
-        client_id, client_secret = self.store.web_config()
+        client_id, client_secret = self._web_credentials()
         if not client_id or not client_secret:
             raise GoogleWebError("Google Web 客户端未配置（需要 Web 应用的 Client ID/Secret）", 503)
         state = secrets.token_urlsafe(24)
@@ -575,7 +595,7 @@ class GoogleWebOAuth:
             entry = self._states.pop(state, None)
         if entry is None or entry["expires_at"] < time.time():
             raise GoogleWebError("登录状态已过期，请重新发起 Google 登录", 400)
-        client_id, client_secret = self.store.web_config()
+        client_id, client_secret = self._web_credentials()
         if not client_id or not client_secret:
             raise GoogleWebError("Google Web 客户端未配置", 503)
         try:

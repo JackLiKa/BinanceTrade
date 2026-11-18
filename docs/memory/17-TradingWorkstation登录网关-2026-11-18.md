@@ -22,12 +22,13 @@
 - `src/gridtrade/api/tw_auth.py`：`TwAuthStore`（`var/tw_auth.db`：users/pending/codes/sessions）、登录页/创建密码页 HTML。
 - 路由（挂在现有面板 FastAPI 上，nginx 内网代理）：
   - `GET /__tw_auth/login`、`POST /__tw_auth/login`
-  - `GET /__tw_auth/google/start` → Google（复用已注册的 `https://gt.jacklika.com/api/auth/google/callback`，无需新增 redirect URI）
+  - `GET /__tw_auth/google/start` → Google（**独立 Web 客户端**，redirect URI `https://tw.jacklika.com/__tw_auth/google/callback`，不复用 gt）
+  - `GET /__tw_auth/google/callback` → tw 域名回调，换 code/userinfo
   - `GET /__tw_auth/google/return`（一次性 code 换 tw_session）
   - `GET/POST /__tw_auth/set-password`
   - `GET /__tw_auth/check`（nginx auth_request，204/401）
   - `GET /__tw_auth/logout`
-- Google 回调按 `purpose="tw"` 分支：
+- Google 回调按 `purpose="tw"` 分支（新回调路径 `/__tw_auth/google/callback`）：
   - 邮箱不在白名单 → 回 tw 登录页报错
   - 没有密码 → 生成 15 分钟 pending token → `/__tw_auth/set-password`
   - 已有密码 → 生成一次性 code → `/__tw_auth/google/return` → 设置 tw_session
@@ -40,12 +41,14 @@
 - 服务器 `.env`：
   - `GRIDTRADE_TW_PUBLIC_URL=https://tw.jacklika.com`
   - `GRIDTRADE_TW_ALLOWED_EMAILS=040418jie@gmail.com,jacklika.business@gmail.com`
+  - `GRIDTRADE_TW_GOOGLE_CLIENT_ID` / `GRIDTRADE_TW_GOOGLE_CLIENT_SECRET`（独立 Web 客户端）
 
 ## 3. 已验证
 
 - 未登录根路径/`/TradingWorkstation` → 302 登录页
 - 登录页返回 200，包含 Gmail 按钮与账号密码表单
-- Gmail start 302 到 Google，redirect_uri 为已注册的 gt 回调
+- Gmail start 302 到 Google，redirect_uri 为 `https://tw.jacklika.com/__tw_auth/google/callback`
+- 独立 Web 客户端未配置时，明确返回登录页错误，不回退到 gt 客户端
 - 用临时账号密码验证：POST 登录设置 `tw_session` → `/__tw_auth/check` 204 → `/TradingWorkstation` 200；验证后已删除测试账号
 - nginx `nginx -t` 通过；无回环/worker 耗尽
 

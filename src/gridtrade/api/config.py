@@ -212,6 +212,8 @@ class Settings:
     google_relay_token: str = ""
     public_url: str = ""
     tw_public_url: str = "https://tw.jacklika.com"
+    tw_google_client_id: str = ""
+    tw_google_client_secret: str = ""
     tw_allowed_emails: list[str] = field(
         default_factory=lambda: [
             "040418jie@gmail.com",
@@ -257,6 +259,8 @@ class Settings:
             google_relay_token=os.environ.get("GRIDTRADE_GOOGLE_RELAY_TOKEN", "").strip(),
             public_url=os.environ.get("GRIDTRADE_PUBLIC_URL", "").strip().rstrip("/"),
             tw_public_url=os.environ.get("GRIDTRADE_TW_PUBLIC_URL", "https://tw.jacklika.com").strip().rstrip("/"),
+            tw_google_client_id=os.environ.get("GRIDTRADE_TW_GOOGLE_CLIENT_ID", "").strip(),
+            tw_google_client_secret=os.environ.get("GRIDTRADE_TW_GOOGLE_CLIENT_SECRET", "").strip(),
             tw_allowed_emails=[
                 item.strip().lower()
                 for item in os.environ.get(
