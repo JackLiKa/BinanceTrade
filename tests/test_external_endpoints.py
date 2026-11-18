@@ -63,7 +63,6 @@ GATE_FUTURES = {
 # Tokyo execution node that the panel proxies to (never a public endpoint).
 ALLOWED_HOSTS = {
     "fapi.binance.com",
-    "demo-fapi.binance.com",  # official demo/testnet base for the futures API
     "api.gateio.ws",
     "10.66.0.2",
 }
@@ -72,7 +71,7 @@ SOURCE_FILES = [
     ROOT / "src/gridtrade/api/live.py",
     ROOT / "src/gridtrade/api/live_gate.py",
     ROOT / "src/gridtrade/api/paper.py",
-    ROOT / "src/gridtrade/api/binance_demo.py",
+    ROOT / "src/gridtrade/api/binance_futures.py",
     ROOT / "src/gridtrade/api/binance_node.py",
     ROOT / "src/gridtrade/api/adapter_server.py",
     ROOT / "research/fetch.py",

@@ -311,11 +311,11 @@ def _order_notional(order: dict[str, Any]) -> float:
 
 def build_from_env() -> Reconciler:
     """Construct the reconciler from adapter environment variables."""
-    from .binance_demo import BinanceDemoClient, BinanceDemoConfig
+    from .binance_futures import BinanceFuturesClient, BinanceFuturesConfig
 
-    cfg = BinanceDemoConfig.from_env()
+    cfg = BinanceFuturesConfig.from_env()
     return Reconciler(
-        lambda: BinanceDemoClient(cfg),
+        lambda: BinanceFuturesClient(cfg),
         ledger=Ledger(os.environ.get("ADAPTER_LEDGER", DEFAULT_LEDGER)),
         alert_log=os.environ.get("ADAPTER_ALERT_LOG", DEFAULT_ALERT_LOG),
         auto_kill_file=os.environ.get("ADAPTER_AUTO_KILL_FILE", "")

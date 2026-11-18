@@ -1,10 +1,8 @@
-"""Binance USDⓈ-M futures demo/testnet adapter (read-only + locked writes).
+"""Binance USDⓈ-M futures production adapter (read-only + locked writes).
 
-The Tokyo execution node talks to the official Binance futures **demo** (testnet)
-REST endpoint ``https://demo-fapi.binance.com`` (see "Testnet API Information" in
-the official docs). The production endpoint ``https://fapi.binance.com`` is known
-(:data:`LIVE_BASE_URL`) but this adapter never selects it automatically: point
-``BINANCE_BASE_URL`` at production only on purpose, with a separately scoped key.
+The Tokyo execution node talks to the official Binance USDⓈ-M futures REST
+endpoint ``https://fapi.binance.com``.  Testnet is not used at runtime; tests
+inject an ``httpx.MockTransport`` and never send orders to the exchange.
 
 Read-only methods work as soon as an API key/secret pair is configured. Every
 write path is hard-locked twice: ``BINANCE_TRADING`` must be truthy *and* the
@@ -21,15 +19,15 @@ mandatory, ``recvWindow`` is optional (default 5000 ms, recommended ``<= 5000``)
 and ``signature`` must be the **last** parameter. The API key travels in the
 ``X-MBX-APIKEY`` request header.
 
-Common demo-environment rejections
+Common production-environment rejections
 ----------------------------------
 ``-1021``
     "Timestamp for this request is outside of the recvWindow." The local clock is
-    behind/ahead of Binance. Call :meth:`BinanceDemoClient.sync_time` (or use NTP)
+    behind/ahead of Binance. Call :meth:`BinanceFuturesClient.sync_time` (or use NTP)
     and keep ``recvWindow`` small; do not blindly increase it.
 ``-2015``
     "Invalid API-key, IP, or permissions for action." Wrong key, key not enabled
-    for futures trading, missing IP whitelist on the demo key, or missing trade
+    for futures trading, missing IP whitelist on the API key, or missing trade
     permission.
 ``-1003``
     Too many requests (HTTP ``429``). Back off exponentially. HTTP ``418`` means
@@ -63,8 +61,6 @@ from ..strategy.costs import CostModel
 logger = logging.getLogger(__name__)
 
 LIVE_BASE_URL = "https://fapi.binance.com"
-# Runtime must never silently use testnet; tests can still inject MockTransport.
-DEMO_BASE_URL = LIVE_BASE_URL
 DEFAULT_KILL_SWITCH_FILE = "/etc/binance/KILL"
 DEFAULT_RECV_WINDOW = 5000
 DEFAULT_TIMEOUT_S = 10.0
@@ -76,11 +72,10 @@ DEFAULT_MAX_OPEN_ORDERS = 10
 MAX_PRICE_DEVIATION = 0.05
 
 __all__ = [
-    "BinanceDemoClient",
-    "BinanceDemoConfig",
+    "BinanceFuturesClient",
+    "BinanceFuturesConfig",
     "BinanceError",
     "BinanceLocked",
-    "DEMO_BASE_URL",
     "LIVE_BASE_URL",
     "MAX_PRICE_DEVIATION",
 ]
@@ -294,10 +289,10 @@ def fill_view(fill: dict[str, Any]) -> dict[str, Any]:
 
 
 @dataclass(slots=True)
-class BinanceDemoConfig:
-    """Environment-driven configuration for the Binance demo adapter.
+class BinanceFuturesConfig:
+    """Environment-driven configuration for the Binance production adapter.
 
-    Instantiate directly in tests/callers (defaults are the demo endpoint and
+    Instantiate directly in tests/callers (defaults are the live endpoint and
     trading locked), or use :meth:`from_env` for deployment.
     """
 
@@ -323,9 +318,9 @@ class BinanceDemoConfig:
         return bool(self.api_key and self.api_secret)
 
     @classmethod
-    def from_env(cls) -> BinanceDemoConfig:
+    def from_env(cls) -> BinanceFuturesConfig:
         return cls(
-            base_url=_env_str("BINANCE_BASE_URL", DEMO_BASE_URL).rstrip("/") or DEMO_BASE_URL,
+            base_url=_env_str("BINANCE_BASE_URL", LIVE_BASE_URL).rstrip("/") or LIVE_BASE_URL,
             api_key=os.environ.get("BINANCE_API_KEY", "").strip(),
             api_secret=os.environ.get("BINANCE_API_SECRET", "").strip(),
             trading_enabled=_env_bool("BINANCE_TRADING", False),
@@ -373,8 +368,8 @@ class BinanceLocked(BinanceError):
 # ---------------------------------------------------------------------------
 
 
-class BinanceDemoClient:
-    """Small, explicitly-gated client for the Binance USDⓈ-M demo/testnet API.
+class BinanceFuturesClient:
+    """Small, explicitly-gated client for the Binance USDⓈ-M production API.
 
     The underlying :class:`httpx.Client` is created once and reused for keep-alive
     connections. Pass ``http`` to inject a client (tests use
@@ -383,7 +378,7 @@ class BinanceDemoClient:
 
     def __init__(
         self,
-        cfg: BinanceDemoConfig,
+        cfg: BinanceFuturesConfig,
         http: httpx.Client | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -403,7 +398,7 @@ class BinanceDemoClient:
             self._http = http
             if cfg.api_key:
                 self._http.headers["X-MBX-APIKEY"] = cfg.api_key
-        logger.debug("Binance demo client created: base_url=%s", cfg.base_url)
+        logger.debug("Binance live client created: base_url=%s", cfg.base_url)
 
     # -- lifecycle -------------------------------------------------------
 
@@ -412,7 +407,7 @@ class BinanceDemoClient:
         if self._owns_http:
             self._http.close()
 
-    def __enter__(self) -> BinanceDemoClient:
+    def __enter__(self) -> BinanceFuturesClient:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
@@ -435,7 +430,7 @@ class BinanceDemoClient:
         if server_ms is None:
             raise BinanceError("Binance time endpoint returned no serverTime")
         self.server_time_offset_ms = server_ms - local_ms
-        logger.info("Binance demo clock synced: offset=%+d ms", self.server_time_offset_ms)
+        logger.info("Binance live clock synced: offset=%+d ms", self.server_time_offset_ms)
         return self.server_time_offset_ms
 
     def _sign(self, params: dict[str, Any]) -> str:
@@ -484,7 +479,7 @@ class BinanceDemoClient:
                     method, path, data=payload or None, headers=headers
                 )
         except httpx.HTTPError as exc:
-            logger.warning("Binance demo request failed: %s %s (%s)", method, path, exc)
+            logger.warning("Binance live request failed: %s %s (%s)", method, path, exc)
             raise BinanceError(f"Binance network error: {exc}", code=-1) from exc
 
         status = response.status_code
@@ -509,15 +504,15 @@ class BinanceDemoClient:
                 message = response.text[:300]
             if status in {418, 429}:
                 logger.warning(
-                    "Binance demo rate limited/banned: HTTP %s code=%s", status, code
+                    "Binance live rate limited/banned: HTTP %s code=%s", status, code
                 )
             elif status == 503:
                 logger.error(
-                    "Binance demo HTTP 503, execution status unknown - do not retry blindly: %s",
+                    "Binance live HTTP 503, execution status unknown - do not retry blindly: %s",
                     message,
                 )
             else:
-                logger.warning("Binance demo HTTP %s code=%s: %s", status, code, message)
+                logger.warning("Binance live HTTP %s code=%s: %s", status, code, message)
             raise BinanceError(message, code=code, http_status=status)
 
         if not response.content:
@@ -722,7 +717,7 @@ class BinanceDemoClient:
         confirm: bool = False,
         position_side: str | None = None,
     ) -> dict[str, Any]:
-        """Place one demo/testnet order after every lock and risk control passes.
+        """Place one live order after every lock and risk control passes.
 
         Rejections: trading disabled (:class:`BinanceLocked`), kill switch present,
         ``confirm`` not true, non-positive qty, LIMIT without a positive price,
@@ -752,7 +747,7 @@ class BinanceDemoClient:
             raise BinanceError(f"side must be BUY or SELL, got {side!r}", code=-1)
         if type_u not in {"LIMIT", "MARKET"}:
             raise BinanceError(
-                f"unsupported order_type {order_type!r} (demo adapter: LIMIT/MARKET)",
+                f"unsupported order_type {order_type!r} (production adapter: LIMIT/MARKET)",
                 code=-1,
             )
 
@@ -832,7 +827,7 @@ class BinanceDemoClient:
 
         result = _as_dict(self._request("POST", "/fapi/v1/order", params, signed=True))
         logger.info(
-            "Binance demo order submitted: %s %s %s qty=%s price=%s id=%s",
+            "Binance live order submitted: %s %s %s qty=%s price=%s id=%s",
             symbol_u,
             side_u,
             type_u,
@@ -954,8 +949,8 @@ class BinanceDemoClient:
             info["server_time"] = self.time()
             info["reachable"] = True
         except Exception as exc:  # noqa: BLE001 - health must never raise
-            logger.warning("Binance demo health probe failed: %s", exc)
-            info["error"] = f"Binance demo unreachable: {exc}"
+            logger.warning("Binance live health probe failed: %s", exc)
+            info["error"] = f"Binance live unreachable: {exc}"
         return info
 
     def masked(self) -> dict[str, Any]:

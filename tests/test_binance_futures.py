@@ -1,4 +1,4 @@
-"""Offline tests for the Binance USDⓈ-M demo adapter.
+"""Offline tests for the Binance USDⓈ-M production adapter.
 
 Every test drives :class:`httpx.MockTransport`; nothing here opens a socket, reads
 the real ``/etc`` or needs a real API key. The signing expectation is recomputed
@@ -17,12 +17,12 @@ from urllib.parse import parse_qsl, urlencode
 import httpx
 import pytest
 
-from gridtrade.api import binance_demo
-from gridtrade.api.binance_demo import (
-    DEMO_BASE_URL,
+from gridtrade.api import binance_futures
+from gridtrade.api.binance_futures import (
+    LIVE_BASE_URL,
     MAX_PRICE_DEVIATION,
-    BinanceDemoClient,
-    BinanceDemoConfig,
+    BinanceFuturesClient,
+    BinanceFuturesConfig,
     BinanceError,
     BinanceLocked,
 )
@@ -42,9 +42,9 @@ Responder = dict[str, Any] | list[dict[str, Any]] | httpx.Response
 # ---------------------------------------------------------------------------
 
 
-def make_config(**overrides: Any) -> BinanceDemoConfig:
+def make_config(**overrides: Any) -> BinanceFuturesConfig:
     values: dict[str, Any] = {
-        "base_url": DEMO_BASE_URL,
+        "base_url": LIVE_BASE_URL,
         "api_key": API_KEY,
         "api_secret": API_SECRET,
         "trading_enabled": True,
@@ -57,7 +57,7 @@ def make_config(**overrides: Any) -> BinanceDemoConfig:
         "position_mode": "oneway",
     }
     values.update(overrides)
-    return BinanceDemoConfig(**values)
+    return BinanceFuturesConfig(**values)
 
 
 def make_client(
@@ -65,9 +65,9 @@ def make_client(
     *,
     clock_value: float = FIXED_CLOCK,
     **config_overrides: Any,
-) -> BinanceDemoClient:
-    http = httpx.Client(transport=httpx.MockTransport(handler), base_url=DEMO_BASE_URL)
-    return BinanceDemoClient(
+) -> BinanceFuturesClient:
+    http = httpx.Client(transport=httpx.MockTransport(handler), base_url=LIVE_BASE_URL)
+    return BinanceFuturesClient(
         make_config(**config_overrides), http=http, clock=lambda: clock_value
     )
 
@@ -118,7 +118,7 @@ def value_of(raw_pairs: list[tuple[str, str]], key: str) -> str:
 
 
 def test_sign_matches_independent_hmac_and_is_order_sensitive() -> None:
-    client = BinanceDemoClient(make_config(), clock=lambda: FIXED_CLOCK)
+    client = BinanceFuturesClient(make_config(), clock=lambda: FIXED_CLOCK)
     try:
         params: dict[str, Any] = {
             "symbol": "BTCUSDT",
@@ -183,10 +183,10 @@ def test_sync_time_records_millisecond_offset() -> None:
 
 
 def test_configured_requires_both_key_and_secret() -> None:
-    assert BinanceDemoConfig().configured is False
-    assert BinanceDemoConfig(api_key="key").configured is False
-    assert BinanceDemoConfig(api_secret="secret").configured is False
-    assert BinanceDemoConfig(api_key="key", api_secret="secret").configured is True
+    assert BinanceFuturesConfig().configured is False
+    assert BinanceFuturesConfig(api_key="key").configured is False
+    assert BinanceFuturesConfig(api_secret="secret").configured is False
+    assert BinanceFuturesConfig(api_key="key", api_secret="secret").configured is True
 
 
 def test_config_from_env_reads_all_fields(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -205,8 +205,8 @@ def test_config_from_env_reads_all_fields(monkeypatch: pytest.MonkeyPatch) -> No
     for name in names:
         monkeypatch.delenv(name, raising=False)
 
-    default = BinanceDemoConfig.from_env()
-    assert default.base_url == DEMO_BASE_URL
+    default = BinanceFuturesConfig.from_env()
+    assert default.base_url == LIVE_BASE_URL
     assert default.api_key == ""
     assert default.api_secret == ""
     assert default.trading_enabled is False
@@ -229,7 +229,7 @@ def test_config_from_env_reads_all_fields(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("BINANCE_MAX_OPEN_ORDERS", "3")
     monkeypatch.setenv("BINANCE_KILL_SWITCH_FILE", "/tmp/KILL")
 
-    cfg = BinanceDemoConfig.from_env()
+    cfg = BinanceFuturesConfig.from_env()
     assert cfg.base_url == "https://example.test"
     assert cfg.api_key == "key"
     assert cfg.api_secret == "secret"
@@ -243,7 +243,7 @@ def test_config_from_env_reads_all_fields(monkeypatch: pytest.MonkeyPatch) -> No
     assert cfg.configured is True
 
     monkeypatch.setenv("BINANCE_TRADING", "1")
-    assert BinanceDemoConfig.from_env().trading_enabled is True
+    assert BinanceFuturesConfig.from_env().trading_enabled is True
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +294,7 @@ def test_order_notional_limit_rejects_before_hitting_network() -> None:
 
 
 def test_limit_price_deviation_over_five_percent_is_rejected() -> None:
-    assert binance_demo.MAX_PRICE_DEVIATION == pytest.approx(0.05)
+    assert binance_futures.MAX_PRICE_DEVIATION == pytest.approx(0.05)
     seen: list[httpx.Request] = []
     handler = handler_for(
         {("GET", "/fapi/v1/ticker/bookTicker"): BOOK_TICKER}, seen
@@ -310,7 +310,7 @@ def test_limit_price_deviation_over_five_percent_is_rejected() -> None:
 def test_price_deviation_limit_can_be_monkeypatched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(binance_demo, "MAX_PRICE_DEVIATION", 0.5)
+    monkeypatch.setattr(binance_futures, "MAX_PRICE_DEVIATION", 0.5)
     routes: dict[tuple[str, str], Responder] = {
         ("GET", "/fapi/v1/ticker/bookTicker"): BOOK_TICKER,
         ("GET", "/fapi/v1/openOrders"): [],
@@ -656,7 +656,7 @@ def test_health_is_offline_safe_and_probes_time() -> None:
     assert info["reachable"] is True
     assert info["configured"] is True
     assert info["trading_enabled"] is True
-    assert info["base_url"] == DEMO_BASE_URL
+    assert info["base_url"] == LIVE_BASE_URL
     assert info["kill_switch"] is False
     assert info["server_offset_ms"] == 0
     assert info["server_time"] == {"serverTime": FIXED_MS + 500}
@@ -671,7 +671,7 @@ def test_health_is_offline_safe_and_probes_time() -> None:
 
 
 def test_masked_never_exposes_secret() -> None:
-    client = BinanceDemoClient(make_config(), clock=lambda: FIXED_CLOCK)
+    client = BinanceFuturesClient(make_config(), clock=lambda: FIXED_CLOCK)
     try:
         masked = client.masked()
         assert set(masked) == {"api_key_hint", "has_secret"}
@@ -686,7 +686,7 @@ def test_masked_never_exposes_secret() -> None:
     finally:
         client.close()
 
-    empty = BinanceDemoClient(
+    empty = BinanceFuturesClient(
         make_config(api_key="", api_secret=""), clock=lambda: FIXED_CLOCK
     )
     try:
@@ -701,17 +701,17 @@ def test_masked_never_exposes_secret() -> None:
 
 
 def test_classify_action_covers_hedge_and_one_way_modes() -> None:
-    assert binance_demo.classify_action("BUY", "LONG") == "OPEN_LONG"
-    assert binance_demo.classify_action("SELL", "LONG") == "CLOSE_LONG"
-    assert binance_demo.classify_action("SELL", "SHORT") == "OPEN_SHORT"
-    assert binance_demo.classify_action("BUY", "SHORT") == "CLOSE_SHORT"
+    assert binance_futures.classify_action("BUY", "LONG") == "OPEN_LONG"
+    assert binance_futures.classify_action("SELL", "LONG") == "CLOSE_LONG"
+    assert binance_futures.classify_action("SELL", "SHORT") == "OPEN_SHORT"
+    assert binance_futures.classify_action("BUY", "SHORT") == "CLOSE_SHORT"
     # one-way mode: reduceOnly decides
-    assert binance_demo.classify_action("BUY", None, reduce_only=False) == "OPEN_LONG"
-    assert binance_demo.classify_action("SELL", None, reduce_only=False) == "OPEN_SHORT"
-    assert binance_demo.classify_action("SELL", None, reduce_only=True) == "CLOSE_LONG"
-    assert binance_demo.classify_action("BUY", None, reduce_only=True) == "CLOSE_SHORT"
-    assert binance_demo.ACTION_LABELS["OPEN_LONG"] == "开多"
-    assert binance_demo.ACTION_LABELS["CLOSE_SHORT"] == "平空"
+    assert binance_futures.classify_action("BUY", None, reduce_only=False) == "OPEN_LONG"
+    assert binance_futures.classify_action("SELL", None, reduce_only=False) == "OPEN_SHORT"
+    assert binance_futures.classify_action("SELL", None, reduce_only=True) == "CLOSE_LONG"
+    assert binance_futures.classify_action("BUY", None, reduce_only=True) == "CLOSE_SHORT"
+    assert binance_futures.ACTION_LABELS["OPEN_LONG"] == "开多"
+    assert binance_futures.ACTION_LABELS["CLOSE_SHORT"] == "平空"
 
 
 def test_fill_view_computes_action_notional_and_fee_bp() -> None:
@@ -730,7 +730,7 @@ def test_fill_view_computes_action_notional_and_fee_bp() -> None:
         "maker": False,
         "time": 1794935814910,
     }
-    view = binance_demo.fill_view(raw)
+    view = binance_futures.fill_view(raw)
     assert view["action"] == "CLOSE_LONG"
     assert view["actionLabel"] == "平多"
     assert view["notional"] == pytest.approx(5.0)
@@ -753,7 +753,7 @@ def test_order_view_carries_order_id_and_action_label() -> None:
         "executedQty": "0",
         "time": 1794935814910,
     }
-    view = binance_demo.order_view(raw)
+    view = binance_futures.order_view(raw)
     assert view["orderId"] == 106275811132
     assert view["clientOrderId"] == "abc"
     assert view["action"] == "OPEN_LONG"

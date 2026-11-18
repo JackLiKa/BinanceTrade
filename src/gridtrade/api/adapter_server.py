@@ -2,12 +2,12 @@
 
 Runs on the WireGuard tunnel address only (default ``10.66.0.2:8100``) so nothing
 is reachable from the public internet. Deliberately dependency-light: stdlib
-``http.server`` + the :mod:`gridtrade.api.binance_demo` client.
+``http.server`` + the :mod:`gridtrade.api.binance_futures` client.
 
 Routes
 ------
 ``GET  /healthz``      adapter state (no secret), plus public ``time`` reachability
-``GET  /market/ping``  public demo/live ``time`` + ``premiumIndex`` sample
+``GET  /market/ping``  public live ``time`` + ``premiumIndex`` sample
 ``GET  /account``      signed read (requires configured key)
 ``GET  /positions``    signed read, non-zero positions only
 ``GET  /open_orders``  signed read
@@ -27,10 +27,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from gridtrade.api.binance_demo import (
+from gridtrade.api.binance_futures import (
     ACTION_LABELS,
-    BinanceDemoClient,
-    BinanceDemoConfig,
+    BinanceFuturesClient,
+    BinanceFuturesConfig,
     BinanceError,
     BinanceLocked,
     fill_view,
@@ -44,9 +44,9 @@ logger = logging.getLogger("gridtrade.adapter")
 _reconciler: Reconciler | None = None
 
 
-def _client() -> BinanceDemoClient:
-    cfg = BinanceDemoConfig.from_env()
-    return BinanceDemoClient(cfg)
+def _client() -> BinanceFuturesClient:
+    cfg = BinanceFuturesConfig.from_env()
+    return BinanceFuturesClient(cfg)
 
 
 def _num(value: Any) -> float | None:
