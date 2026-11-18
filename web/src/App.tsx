@@ -10,6 +10,7 @@ import { Strategy } from './pages/Strategy'
 import { Backtest } from './pages/Backtest'
 import { Paper } from './pages/Paper'
 import { Binance } from './pages/Binance'
+import { BinanceApi } from './pages/BinanceApi'
 import { Orders } from './pages/Orders'
 import { Positions } from './pages/Positions'
 import { Risk } from './pages/Risk'
@@ -53,6 +54,8 @@ function Shell() {
       <Binance mode="execution" />
     ) : route === 'binance' ? (
       <Binance />
+    ) : route === 'binance-api' ? (
+      <BinanceApi />
     ) : route === 'orders' ? (
       <Orders />
     ) : route === 'positions' ? (

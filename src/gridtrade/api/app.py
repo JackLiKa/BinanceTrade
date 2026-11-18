@@ -1329,6 +1329,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except BinanceNodeError as exc:
             raise HTTPException(status_code=502, detail=f"执行节点错误: {exc.msg}") from exc
 
+    @app.post("/api/binance/gateway", dependencies=guarded)
+    async def binance_gateway(payload: dict[str, Any]) -> dict[str, Any]:
+        client = node_or_503()
+        return await asyncio.to_thread(node_fetch, lambda: client.gateway(payload))
+
     @app.get("/api/binance/health", dependencies=guarded)
     async def binance_health() -> dict[str, Any]:
         client = node_or_503()

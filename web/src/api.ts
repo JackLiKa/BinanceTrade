@@ -1001,6 +1001,9 @@ export const api = {
   binanceHealth: () =>
     request<{ ok: boolean; node_url: string; health: BinanceNodeHealth }>('/api/binance/health'),
 
+  binanceGateway: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>('/api/binance/gateway', json(body)),
+
   binanceState: (symbol?: string) =>
     request<BinanceState>(`/api/binance/state${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`),
 }

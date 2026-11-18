@@ -62,8 +62,9 @@ from ..strategy.costs import CostModel
 
 logger = logging.getLogger(__name__)
 
-DEMO_BASE_URL = "https://demo-fapi.binance.com"
 LIVE_BASE_URL = "https://fapi.binance.com"
+# Runtime must never silently use testnet; tests can still inject MockTransport.
+DEMO_BASE_URL = LIVE_BASE_URL
 DEFAULT_KILL_SWITCH_FILE = "/etc/binance/KILL"
 DEFAULT_RECV_WINDOW = 5000
 DEFAULT_TIMEOUT_S = 10.0
@@ -300,7 +301,7 @@ class BinanceDemoConfig:
     trading locked), or use :meth:`from_env` for deployment.
     """
 
-    base_url: str = DEMO_BASE_URL
+    base_url: str = LIVE_BASE_URL
     api_key: str = ""
     #: Hidden from ``repr`` so a stray log line cannot leak the signing secret.
     api_secret: str = field(default="", repr=False)

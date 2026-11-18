@@ -9,6 +9,7 @@ export const ROUTES = [
   'paper',
   'live',
   'binance',
+  'binance-api',
   'orders',
   'positions',
   'risk',

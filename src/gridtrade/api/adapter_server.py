@@ -36,6 +36,7 @@ from gridtrade.api.binance_demo import (
     fill_view,
     order_view,
 )
+from gridtrade.api.binance_gateway import BinanceGateway, BinanceGatewayError
 from gridtrade.api.binance_reconcile import Reconciler, build_from_env
 
 logger = logging.getLogger("gridtrade.adapter")
@@ -430,6 +431,28 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw or b"{}")
         except json.JSONDecodeError:
             self._send(HTTPStatus.BAD_REQUEST, {"ok": False, "msg": "invalid json"})
+            return
+
+        if route == "/gateway":
+            try:
+                gateway = BinanceGateway.from_env()
+                result = gateway.request(
+                    product=str(payload.get("product", "usdm")),
+                    method=str(payload.get("method", "GET")),
+                    path=str(payload.get("path", "/fapi/v1/time")),
+                    params=payload.get("params") or {},
+                    signed=bool(payload.get("signed", False)),
+                    confirm=bool(payload.get("confirm", False)),
+                )
+                self._send(HTTPStatus.OK, result)
+            except BinanceGatewayError as exc:
+                self._send(
+                    int(exc.status),
+                    {"ok": False, "msg": exc.msg, "code": exc.code},
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("gateway error")
+                self._send(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "msg": str(exc)})
             return
 
         if route == "/cancel":

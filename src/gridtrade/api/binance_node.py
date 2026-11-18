@@ -59,6 +59,26 @@ class BinanceNodeClient:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            response = self._http.post(path, json=payload)
+        except httpx.HTTPError as exc:
+            raise BinanceNodeError(f"节点不可达: {exc}") from exc
+        try:
+            data: Any = response.json()
+        except ValueError:
+            data = None
+        if response.status_code >= 400:
+            msg = "节点返回错误"
+            code = None
+            if isinstance(data, dict):
+                msg = str(data.get("msg") or data.get("error") or msg)
+                code = data.get("code")
+            raise BinanceNodeError(msg, status=response.status_code, code=code)
+        if not isinstance(data, dict):
+            raise BinanceNodeError("节点返回了非 JSON 响应", status=response.status_code)
+        return data
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         try:
             response = self._http.get(path, params=params or None)
@@ -114,6 +134,9 @@ class BinanceNodeClient:
     def adl_risk(self, symbol: str | None = None) -> dict[str, Any]:
         params = {"symbol": symbol.upper()} if symbol else None
         return self._get("/market/adl-risk", params)
+
+    def gateway(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/gateway", payload)
 
     def alerts(self, limit: int = 20) -> dict[str, Any]:
         """Recent reconciliation alerts from the node (may be empty)."""
