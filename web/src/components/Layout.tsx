@@ -6,6 +6,7 @@ import {
   CandlestickChart,
   Database,
   FlaskConical,
+  Info,
   Landmark,
   Bitcoin,
   LayoutDashboard,
@@ -19,6 +20,7 @@ import {
   X,
 } from 'lucide-react'
 import { cx, fmtPct, fmtPrice, timeAgo } from '../format'
+import { isShellApp } from '../env'
 import { navigate, useRoute, type RouteName } from '../router'
 import { useApp } from '../store'
 import { Badge, Button, useNow } from './ui'
@@ -44,6 +46,14 @@ const NAV: NavItem[] = [
   { route: 'risk', label: '风控', icon: ShieldAlert, mobile: true },
   { route: 'quality', label: '数据质量', icon: Database, mobile: false },
   { route: 'settings', label: '设置', icon: SettingsIcon, mobile: false },
+]
+
+const SHELL_NAV: NavItem[] = [
+  { route: 'market', label: '首页', short: '首页', icon: CandlestickChart, mobile: true },
+  { route: 'live', label: '实盘', short: '实盘', icon: Landmark, mobile: true },
+  { route: 'paper', label: '模拟盘', short: '模拟盘', icon: Bot, mobile: true },
+  { route: 'binance', label: 'Binance账户', short: 'Binance', icon: Bitcoin, mobile: true },
+  { route: 'overview', label: '数据面板', short: '数据', icon: LayoutDashboard, mobile: true },
 ]
 
 export const TITLES: Record<RouteName, string> = {
@@ -72,9 +82,7 @@ function ConnectionPill() {
           live ? 'live-dot' : connected ? 'bg-[#f0b90b]' : 'bg-[#5e6673]',
         )}
       />
-      <span className="hidden sm:inline">
-        {live ? 'Binance 实时' : connected ? '本地数据' : '重连中'}
-      </span>
+      <span>{live ? 'Binance 实时' : connected ? '本地数据' : '重连中'}</span>
     </span>
   )
 }
@@ -305,8 +313,9 @@ function Toasts() {
 }
 
 export function Layout({ children }: { children: ReactNode }) {
+  const shell = isShellApp()
   const route = useRoute()
-  const { signOut, lastBeat, snapshot, loading } = useApp()
+  const { signOut, lastBeat, snapshot, loading, killSwitch, setKillSwitch, toast, symbol, session } = useApp()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const now = useNow(5000)
@@ -326,11 +335,19 @@ export function Layout({ children }: { children: ReactNode }) {
     setMoreOpen(false)
   }, [route])
 
-  const mobileNav = NAV.filter((item) => item.mobile)
+  const mobileNav = shell ? SHELL_NAV : NAV.filter((item) => item.mobile)
+  const shellTitles: Partial<Record<RouteName, string>> = {
+    market: '行情',
+    live: '实盘',
+    paper: '模拟盘',
+    binance: 'Binance账户',
+    overview: '数据面板',
+  }
+  const title = shell ? (shellTitles[route] ?? TITLES[route]) : TITLES[route]
 
   return (
     <div className="flex min-h-full bg-base">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[228px] flex-col border-r border-line-soft bg-[#0d1014] lg:flex">
+      <aside className={cx('fixed inset-y-0 left-0 z-30 w-[228px] flex-col border-r border-line-soft bg-[#0d1014]', shell ? 'hidden' : 'hidden md:flex')}>
         <div className="flex items-center gap-2.5 px-5 py-5">
           <div className="grid h-8 w-8 place-items-center rounded-lg border border-accent/25 bg-accent/10">
             <Activity size={16} className="text-accent" />
@@ -347,6 +364,7 @@ export function Layout({ children }: { children: ReactNode }) {
             return (
               <button
                 key={item.route}
+                data-route={item.route}
                 onClick={() => navigate(item.route)}
                 className={cx(
                   'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12.5px] transition-colors',
@@ -392,17 +410,27 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <div className="flex min-h-full w-full flex-col lg:pl-[228px]">
+      <div className={cx('flex min-h-full w-full flex-col', shell ? '' : 'md:pl-[228px]')}>
         <header className="sticky top-0 z-20 border-b border-line-soft bg-base">
-          <div className="flex h-14 items-center gap-3 px-4 md:px-6">
-            <div className="hidden items-center gap-2 sm:flex lg:hidden">
-              <div className="grid h-7 w-7 place-items-center rounded-md border border-accent/25 bg-accent/10">
-                <Activity size={13} className="text-accent" />
+          <div className="flex h-14 items-center gap-3 px-3 md:px-6">
+            {shell ? (
+              <button
+                onClick={() => navigate('settings')}
+                aria-label="设置"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-elevated text-muted active:bg-panel"
+              >
+                <SettingsIcon size={17} />
+              </button>
+            ) : (
+              <div className="hidden items-center gap-2 sm:flex md:hidden">
+                <div className="grid h-7 w-7 place-items-center rounded-md border border-accent/25 bg-accent/10">
+                  <Activity size={13} className="text-accent" />
+                </div>
               </div>
-            </div>
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
-                <h1 className="truncate text-[14px] font-semibold text-ink">{TITLES[route]}</h1>
+                <h1 className="truncate text-[14px] font-semibold text-ink">{title}</h1>
                 <span className="shrink-0">
                   <SymbolSelect />
                 </span>
@@ -418,21 +446,33 @@ export function Layout({ children }: { children: ReactNode }) {
                 ) : null}
               </div>
             </div>
-            <div className="hidden items-center gap-3 md:flex">
-              <ConnectionPill />
-              <PriceTicker />
-            </div>
-            <KillSwitchButton />
+            {shell ? (
+              <button
+                onClick={() => setMoreOpen(true)}
+                aria-label="其他信息"
+                className="flex h-9 shrink-0 items-center gap-1 rounded-lg border border-line bg-elevated px-2.5 text-[10.5px] text-muted active:bg-panel"
+              >
+                <Info size={14} /> 其他
+              </button>
+            ) : (
+              <>
+                <div className="hidden items-center gap-3 md:flex">
+                  <ConnectionPill />
+                  <PriceTicker />
+                </div>
+                <KillSwitchButton />
+              </>
+            )}
           </div>
         </header>
 
-        <main className={cx('flex-1 px-4 pb-24 pt-4 md:px-6 md:pb-8', loading && 'opacity-90')}>
+        <main className={cx('flex-1 px-3 pb-24 pt-3 md:px-6 md:pb-8 md:pt-4', loading && 'opacity-90')}>
           <div className="mx-auto w-full max-w-[1440px] animate-[rise_0.32s_cubic-bezier(0.22,1,0.36,1)_both]">
             {children}
           </div>
         </main>
 
-        <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line-soft bg-[#0d1014] lg:hidden">
+        <nav className={cx('fixed inset-x-0 bottom-0 z-30 border-t border-line-soft bg-[#0d1014]', shell ? '' : 'md:hidden')}>
           <div className="mx-auto flex max-w-lg items-stretch justify-around px-1 pb-[env(safe-area-inset-bottom)]">
             {mobileNav.map((item) => {
               const active = item.route === route
@@ -440,6 +480,7 @@ export function Layout({ children }: { children: ReactNode }) {
               return (
                 <button
                   key={item.route}
+                  data-route={item.route}
                   onClick={() => navigate(item.route)}
                   className={cx(
                     'flex flex-1 flex-col items-center gap-1 py-2.5 text-[9.5px]',
@@ -451,53 +492,129 @@ export function Layout({ children }: { children: ReactNode }) {
                 </button>
               )
             })}
-            <button
-              onClick={() => setMoreOpen((open) => !open)}
-              className={cx(
-                'flex flex-1 flex-col items-center gap-1 py-2.5 text-[9.5px]',
-                moreOpen ? 'text-accent' : 'text-faint',
-              )}
-            >
-              <MoreHorizontal size={18} strokeWidth={1.8} />
-              更多
-            </button>
+            {shell ? null : (
+              <button
+                onClick={() => setMoreOpen((open) => !open)}
+                className={cx(
+                  'flex flex-1 flex-col items-center gap-1 py-2.5 text-[9.5px]',
+                  moreOpen ? 'text-accent' : 'text-faint',
+                )}
+              >
+                <MoreHorizontal size={18} strokeWidth={1.8} />
+                更多
+              </button>
+            )}
           </div>
         </nav>
 
         {moreOpen ? (
-          <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setMoreOpen(false)}>
+          <div className={cx('fixed inset-0 z-40', shell ? '' : 'md:hidden')} onClick={() => setMoreOpen(false)}>
             <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px]" />
-            <div className="absolute inset-x-0 bottom-0 rounded-t-2xl border-t border-line bg-panel px-3 pb-[calc(env(safe-area-inset-bottom)+72px)] pt-3">
+            <div
+              className="absolute inset-x-0 bottom-0 max-h-[82vh] overflow-y-auto rounded-t-2xl border-t border-line bg-panel px-3 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-3"
+              onClick={(event) => event.stopPropagation()}
+            >
               <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-line" />
-              <div className="grid grid-cols-3 gap-2">
-                {NAV.map((item) => {
-                  const Icon = item.icon
-                  return (
-                    <button
-                      key={item.route}
-                      onClick={() => {
-                        navigate(item.route)
-                        setMoreOpen(false)
-                      }}
-                      className={cx(
-                        'flex flex-col items-center gap-2 rounded-xl border px-2 py-3 text-[11px]',
-                        item.route === route
-                          ? 'border-accent/30 bg-accent/8 text-accent'
-                          : 'border-line-soft bg-elevated text-muted',
-                      )}
-                    >
-                      <Icon size={18} />
-                      <span className="text-center leading-tight">{item.label}</span>
+              {shell ? (
+                <>
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-[13px] font-semibold text-ink">其他信息</h2>
+                    <button onClick={() => setMoreOpen(false)} className="text-faint">
+                      <X size={15} />
                     </button>
-                  )
-                })}
-              </div>
-              <div className="mt-3 flex items-center justify-between rounded-xl border border-line-soft px-3 py-2.5">
-                <Badge tone="neutral">仅研究</Badge>
-                <Button variant="ghost" size="sm" onClick={() => void signOut()}>
-                  <LogOut size={13} /> 退出登录
-                </Button>
-              </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="rounded-xl border border-line-soft bg-elevated px-3 py-2.5">
+                      <div className="label">数据源</div>
+                      <div className="mt-1"><ConnectionPill /></div>
+                    </div>
+                    <div className="rounded-xl border border-line-soft bg-elevated px-3 py-2.5">
+                      <div className="label">最后推送</div>
+                      <div className="num mt-1 text-muted">{snapshot ? timeAgo(lastBeat || Date.now()) : '—'}</div>
+                    </div>
+                    <div className="rounded-xl border border-line-soft bg-elevated px-3 py-2.5">
+                      <div className="label">当前标的</div>
+                      <div className="mt-1 font-mono text-ink">{symbol || '—'}</div>
+                    </div>
+                    <div className="rounded-xl border border-line-soft bg-elevated px-3 py-2.5">
+                      <div className="label">版本</div>
+                      <div className="mt-1 font-mono text-ink">v{session?.version ?? '—'}</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    {NAV.filter((item) => !SHELL_NAV.some((main) => main.route === item.route)).map((item) => {
+                      const Icon = item.icon
+                      return (
+                        <button
+                          key={item.route}
+                          onClick={() => {
+                            navigate(item.route)
+                            setMoreOpen(false)
+                          }}
+                          className={cx(
+                            'flex flex-col items-center gap-2 rounded-xl border px-2 py-3 text-[10.5px]',
+                            item.route === route
+                              ? 'border-accent/30 bg-accent/8 text-accent'
+                              : 'border-line-soft bg-elevated text-muted',
+                          )}
+                        >
+                          <Icon size={17} />
+                          <span className="text-center leading-tight">{item.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-line-soft px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <Badge tone={killSwitch ? 'down' : 'neutral'}>{killSwitch ? '紧急停止中' : '运行中'}</Badge>
+                      <Button
+                        variant={killSwitch ? 'danger' : 'outline'}
+                        size="sm"
+                        onClick={() => {
+                          void setKillSwitch(!killSwitch).catch(() => toast('紧急停止操作失败', 'error'))
+                        }}
+                      >
+                        <ShieldAlert size={13} /> {killSwitch ? '解除停止' : '紧急停止'}
+                      </Button>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => void signOut()}>
+                      <LogOut size={13} /> 退出
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    {NAV.map((item) => {
+                      const Icon = item.icon
+                      return (
+                        <button
+                          key={item.route}
+                          onClick={() => {
+                            navigate(item.route)
+                            setMoreOpen(false)
+                          }}
+                          className={cx(
+                            'flex flex-col items-center gap-2 rounded-xl border px-2 py-3 text-[11px]',
+                            item.route === route
+                              ? 'border-accent/30 bg-accent/8 text-accent'
+                              : 'border-line-soft bg-elevated text-muted',
+                          )}
+                        >
+                          <Icon size={18} />
+                          <span className="text-center leading-tight">{item.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between rounded-xl border border-line-soft px-3 py-2.5">
+                    <Badge tone="neutral">仅研究</Badge>
+                    <Button variant="ghost" size="sm" onClick={() => void signOut()}>
+                      <LogOut size={13} /> 退出登录
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         ) : null}

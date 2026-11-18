@@ -257,6 +257,7 @@ cp apk/.env.example apk/.env
 - **Google 登录**：配置 OAuth Client ID/Secret、启停、维护允许登录的 Google 邮箱；数据存 `var/auth.db`。
 - **后台 Google 登录**：登录页同样支持 Google OAuth（带官方 G 图标）；账号需在 Google 页被标记为“后台”才可进入，管理员密码保留为备用。
 - **菜单式布局**：左侧切换概览 / 实盘配置 / 模拟盘 / Google 登录 / 安全 / 审计日志；移动端为顶部横向菜单。
+- **APK 专用导航**：首页行情；底部首页/实盘/模拟盘/Binance/数据；左上设置；右上“其他信息”面板。
 - 凭据写服务器 `.env`；管理员密码以 PBKDF2 哈希存在 `var/admin.db`，不在 `.env` 中。
 - **安全提示**：后台走 HTTP 时密码是明文传输，建议尽快配 HTTPS；默认密码务必修改。
 

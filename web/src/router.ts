@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { defaultRoute } from './env'
 
 export const ROUTES = [
   'overview',
@@ -19,7 +20,7 @@ export type RouteName = (typeof ROUTES)[number]
 
 function read(): RouteName {
   const raw = window.location.hash.replace(/^#\/?/, '').split('?')[0]
-  return (ROUTES as readonly string[]).includes(raw) ? (raw as RouteName) : 'overview'
+  return (ROUTES as readonly string[]).includes(raw) ? (raw as RouteName) : defaultRoute()
 }
 
 export function navigate(route: RouteName): void {
@@ -35,7 +36,7 @@ export function useRoute(): RouteName {
       window.scrollTo({ top: 0 })
     }
     window.addEventListener('hashchange', onChange)
-    if (!window.location.hash) window.location.hash = '#/overview'
+    if (!window.location.hash || window.location.hash === '#/') window.location.hash = `#/${defaultRoute()}`
     return () => window.removeEventListener('hashchange', onChange)
   }, [])
   return route

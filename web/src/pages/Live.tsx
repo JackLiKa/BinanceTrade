@@ -360,7 +360,7 @@ export function Live() {
 
             <Card pad={false}>
               <div className="px-5 pt-5">
-                <CardHead title="最近成交" hint="手数与价格来自 Gate 私有接口。" right={<Badge tone="neutral">{data.trades.length}</Badge>} />
+                <CardHead title="交割单（成交）" hint="手数与价格来自 Gate 私有接口。" right={<Badge tone="neutral">{data.trades.length}</Badge>} />
               </div>
               <div className="max-h-[320px] overflow-auto">
                 <table className="w-full text-[11.5px]">
@@ -395,7 +395,7 @@ export function Live() {
 
           <Card pad={false}>
             <div className="px-5 pt-5">
-              <CardHead title="资金流水" hint="Gate account_book：pnl=已实现、fee=手续费、fund=资金费。" right={<Badge tone="neutral">{data.ledger.length}</Badge>} />
+              <CardHead title="资金流水" hint="Gate account_book：pnl=已实现、fee=手续费、fund=资金费；可对照交割单。" right={<Badge tone="neutral">{data.ledger.length}</Badge>} />
             </div>
             <div className="max-h-[300px] overflow-auto">
               <table className="w-full text-[11.5px]">

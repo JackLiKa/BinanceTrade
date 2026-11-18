@@ -290,6 +290,17 @@ overview 响应字段：`env_path/token_hint/default_password/admin_username`、
 - hooks：`useInView`、`useDeferredMount`（`web/src/hooks.ts`）；组件 `components/ErrorBoundary.tsx`。
 - 细节与根因见 [14](14-Google-OAuth与行情懒加载-2026-11-18.md)。
 
+## 8.6 APK 移动端布局（2026-11-18）
+
+APK 通过 UA `GridtradeShell` 识别，使用专用导航：
+
+- 首页默认 `#/market`（行情）
+- 底部 5 项：首页（行情） / 实盘 / 模拟盘 / Binance / 数据（数据面板 = `#/overview`）
+- 左上角齿轮 → `#/settings`
+- 右上角“其他” → 其他信息面板：数据源、最后推送、当前标的、版本、策略/回测/订单/持仓/风控/数据质量、紧急停止、退出
+- “实盘”页含交割单（成交）与资金流水；“Binance”页含账户详情、持仓、挂单、交割单（成交明细）、历史订单、对账告警
+- 桌面 Web 的左侧导航从 `lg` 提前到 `md`，平板/桌面均显示左侧菜单；移动端仍用底部导航。
+
 ## 9. APK 构建
 
 `apk/AndroidManifest.xml` 关键项：

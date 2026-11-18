@@ -253,7 +253,7 @@ export function Binance() {
 
       <Card>
         <CardHead
-          title="成交明细"
+          title="交割单（成交明细）"
           hint={`最近 ${fills.length} 笔成交`}
           right={<span className="text-[11px] text-faint">来自节点 /fills（userTrades）</span>}
         />
@@ -314,7 +314,7 @@ export function Binance() {
 
       <Card>
         <CardHead
-          title="历史订单"
+          title="历史订单 / 交割单"
           hint={`最近 ${history.length} 条`}
           right={<span className="text-[11px] text-faint">来自节点 /orders（allOrders）</span>}
         />
