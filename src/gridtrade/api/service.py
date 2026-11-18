@@ -81,7 +81,14 @@ class ResearchService:
     # -- datasets ---------------------------------------------------------
 
     def symbols(self) -> list[str]:
-        return sorted(path.name[: -len("_1m.parquet")] for path in self.data_dir.glob("*_1m.parquet"))
+        symbols: list[str] = []
+        for path in self.data_dir.glob("*_1m.parquet"):
+            name = path.name[: -len("_1m.parquet")]
+            # Mark-price datasets are auxiliary columns, not tradable symbols.
+            if name.endswith("_mark"):
+                continue
+            symbols.append(name)
+        return sorted(symbols)
 
     def _binance_risk(self, symbol: str, params: ResearchParams) -> ResearchParams:
         """Use the symbol's real Binance leverage bracket/fee when reachable.

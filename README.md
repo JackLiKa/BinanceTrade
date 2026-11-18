@@ -290,7 +290,7 @@ cp apk/.env.example apk/.env
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest            # 180 项
+.venv/bin/python -m pytest            # 181 项
 cd web && pnpm typecheck              # tsc --noEmit
 ```
 
