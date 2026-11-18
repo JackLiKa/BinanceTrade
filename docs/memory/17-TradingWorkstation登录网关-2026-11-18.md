@@ -60,6 +60,18 @@
 - 受保护页面 HTML 注入账号悬浮入口（修改密码/退出）
 - nginx `nginx -t` 通过；无回环/worker 耗尽
 
+## 3.1 Service Worker 导致的 ERR_FAILED（已修复）
+
+现象：加登录网关后，访问 `/TradingWorkstation/` 在 Chrome 显示 `ERR_FAILED`，但 `curl` 正常 302 到登录页。
+
+原因：TradingWorkstation 旧版注册了 scope 为 `/TradingWorkstation/` 的 service worker，它拦截导航并返回旧/错误响应，登录网关的 302 被劫持。
+
+修复：
+- `/reset-sw` 公共页：注销所有 SW、清空 CacheStorage、跳回 `/TradingWorkstation`
+- `/TradingWorkstation/sw.js` 返回“注销自身并清缓存”的脚本（`no-store`），浏览器更新 SW 后自动退出
+- 登录页底部提供“页面打不开？清理旧缓存”入口
+- 用户若仍报错，访问一次 `https://tw.jacklika.com/reset-sw` 即可恢复
+
 ## 4. 注意
 
 - “grafana”若指真实的 Grafana 服务（3000 端口），本次没有改 Grafana 自身登录；需要单独配置 Google OAuth/白名单，或让 Grafana 走同一套反代鉴权。
