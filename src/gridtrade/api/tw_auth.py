@@ -220,6 +220,7 @@ button{{width:100%;height:40px;margin-top:16px;border:0;border-radius:8px;backgr
 <label>邮箱</label><input name="email" type="email" autocomplete="username" required>
 <label>密码</label><input name="password" type="password" autocomplete="current-password" required>
 <button type="submit">登录</button>
+<p style="text-align:center;margin:12px 0 0"><a href="/__tw_auth/change-password" style="color:#fcd535;text-decoration:none">修改密码</a></p>
 </form></body></html>"""
 
 

@@ -15,7 +15,7 @@
   2. **账号密码**：首次必须先用 Gmail 登录，然后进入“创建登录密码”（至少 8 位，两次一致）；之后可用邮箱+密码登录。
 - 会话 Cookie：`tw_session`，30 天，httpOnly，SameSite=Lax，Secure。
 - 退出：`/__tw_auth/logout`。
-- **修改密码**：`/__tw_auth/change-password`（登录后可用，所有用户均可改）；TradingWorkstation 页面右下角注入“修改密码 · 退出”悬浮入口。
+- **修改密码**：`/__tw_auth/change-password`（登录后可用，所有用户均可改；未登录会先跳登录并回跳改密页）；TradingWorkstation 页面**右上角**注入“账户 · 修改密码 · 退出”悬浮入口；登录页也有“修改密码”链接。
 - 其他路由：
   - `/admin` → `https://gt.jacklika.com/admin`（后台管理）
   - `/grafana` → `http://81.71.71.131:3000/`（Grafana）

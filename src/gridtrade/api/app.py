@@ -502,10 +502,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return HTMLResponse(login_page(next_path=next, error=error))
 
     @app.get("/__tw_auth/change-password", response_class=HTMLResponse, include_in_schema=False)
-    async def tw_change_password_page(request: Request, next: str = "/TradingWorkstation") -> HTMLResponse:
+    async def tw_change_password_page(request: Request, next: str = "/TradingWorkstation") -> Response:
         email = tw_store.session_email(request.cookies.get("tw_session", ""))
         if email is None:
-            return HTMLResponse(login_page(next_path=next, error="请先登录后再修改密码"))
+            return RedirectResponse(
+                "/__tw_auth/login?next=" + quote("/__tw_auth/change-password")
+                + "&error=" + urlencode({"": "请先登录后再修改密码"})[1:],
+                status_code=302,
+            )
         return HTMLResponse(change_password_page(email=email, next_path=next))
 
     @app.post("/__tw_auth/change-password", include_in_schema=False)
