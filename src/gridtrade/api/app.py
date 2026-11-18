@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ..research.runner import ResearchParams
 from ..strategy.grid import GridParams
 from .config import LiveConfig, Settings
+from .auto_live import AutoLive, AutoLiveConfig
 from .binance_node import BinanceNodeClient, BinanceNodeError
 from .jobs import JobQueue
 from .live import LiveMarket
@@ -1322,6 +1323,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     node_client = (
         BinanceNodeClient(settings.binance_node_url) if settings.binance_node_url else None
     )
+    auto_live = AutoLive(node_client) if node_client is not None else None
 
     def node_or_503() -> BinanceNodeClient:
         if node_client is None:
@@ -1336,6 +1338,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return fn()
         except BinanceNodeError as exc:
             raise HTTPException(status_code=502, detail=f"执行节点错误: {exc.msg}") from exc
+
+    @app.get("/api/auto-live", dependencies=guarded)
+    async def auto_live_status() -> dict[str, Any]:
+        if auto_live is None:
+            raise HTTPException(status_code=503, detail="未配置 Binance 执行节点")
+        return await asyncio.to_thread(auto_live.snapshot)
+
+    @app.post("/api/auto-live/arm", dependencies=guarded)
+    async def auto_live_arm(payload: dict[str, Any]) -> dict[str, Any]:
+        if auto_live is None:
+            raise HTTPException(status_code=503, detail="未配置 Binance 执行节点")
+        if not payload.get("confirm"):
+            raise HTTPException(status_code=400, detail="必须显式确认开启")
+        try:
+            config = AutoLiveConfig(
+                symbol=str(payload.get("symbol", "AMGNUSDT")).upper(),
+                capital=float(payload.get("capital", 10)),
+                levels=int(payload.get("levels", 4)),
+                leverage=float(payload.get("leverage", 1)),
+                spacing_bp=float(payload.get("spacing_bp", 100)),
+                stop_dd_pct=float(payload.get("stop_dd_pct", 10)),
+                max_order_notional=float(payload.get("max_order_notional", 6)),
+                max_position_notional=float(payload.get("max_position_notional", 10)),
+                daily_loss_limit_pct=float(payload.get("daily_loss_limit_pct", 5)),
+                poll_seconds=float(payload.get("poll_seconds", 5)),
+            )
+            return await asyncio.to_thread(auto_live.arm, config)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/auto-live/disarm", dependencies=guarded)
+    async def auto_live_disarm() -> dict[str, Any]:
+        if auto_live is None:
+            raise HTTPException(status_code=503, detail="未配置 Binance 执行节点")
+        return await asyncio.to_thread(auto_live.disarm)
 
     @app.post("/api/binance/gateway", dependencies=guarded)
     async def binance_gateway(payload: dict[str, Any]) -> dict[str, Any]:

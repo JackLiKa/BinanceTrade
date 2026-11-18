@@ -10,6 +10,7 @@ export const ROUTES = [
   'live',
   'binance',
   'binance-api',
+  'auto-live',
   'orders',
   'positions',
   'risk',

@@ -1007,6 +1007,14 @@ export const api = {
   binanceHealth: () =>
     request<{ ok: boolean; node_url: string; health: BinanceNodeHealth }>('/api/binance/health'),
 
+  autoLive: () => request<Record<string, unknown>>('/api/auto-live'),
+
+  autoLiveArm: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>('/api/auto-live/arm', json(body)),
+
+  autoLiveDisarm: () =>
+    request<Record<string, unknown>>('/api/auto-live/disarm', { method: 'POST' }),
+
   binanceGateway: (body: Record<string, unknown>) =>
     request<Record<string, unknown>>('/api/binance/gateway', json(body)),
 

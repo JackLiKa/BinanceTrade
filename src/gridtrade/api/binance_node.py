@@ -135,6 +135,12 @@ class BinanceNodeClient:
         params = {"symbol": symbol.upper()} if symbol else None
         return self._get("/market/adl-risk", params)
 
+    def snapshot(self, symbol: str) -> dict[str, Any]:
+        return self._get("/market/snapshot", {"symbol": symbol.upper()})
+
+    def contract(self, symbol: str) -> dict[str, Any]:
+        return self._get("/market/contract", {"symbol": symbol.upper()})
+
     def gateway(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/gateway", payload)
 

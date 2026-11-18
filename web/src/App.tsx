@@ -11,6 +11,7 @@ import { Backtest } from './pages/Backtest'
 import { Paper } from './pages/Paper'
 import { Binance } from './pages/Binance'
 import { BinanceApi } from './pages/BinanceApi'
+import { AutoLivePage } from './pages/AutoLive'
 import { Orders } from './pages/Orders'
 import { Positions } from './pages/Positions'
 import { Risk } from './pages/Risk'
@@ -56,6 +57,8 @@ function Shell() {
       <Binance />
     ) : route === 'binance-api' ? (
       <BinanceApi />
+    ) : route === 'auto-live' ? (
+      <AutoLivePage />
     ) : route === 'orders' ? (
       <Orders />
     ) : route === 'positions' ? (
