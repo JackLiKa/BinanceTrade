@@ -20,6 +20,7 @@ def compute_stats(
     liquidated: bool = False,
     liquidation_price: float | None = None,
     liquidation_time: str | None = None,
+    bad_debt: float = 0.0,
 ) -> dict:
     if len(equity) == 0:
         return {"total_return": 0.0, "ann_return": 0.0, "max_dd": 0.0, "sharpe": 0.0}
@@ -31,9 +32,10 @@ def compute_stats(
     ann = (1.0 + total) ** (1.0 / years) - 1.0 if total > -1.0 else -1.0
 
     peak = equity.cummax()
-    # A margin account can never lose more than 100%: the liquidation engine
-    # closes it at/before zero.  Clamp here as a second line of defence.
-    max_dd = min(1.0, float((1.0 - equity / peak).max()))
+    # Account-equity drawdown is deliberately NOT capped at 100%: cross
+    # margin can produce negative equity after a gap through the liquidation
+    # price.  That is bad debt, not a recoverable return.
+    max_dd = float((1.0 - equity / peak).max())
 
     daily = equity.resample("1D").last().dropna()
     dret = daily.pct_change().dropna()
@@ -57,4 +59,6 @@ def compute_stats(
         "liquidated": bool(liquidated),
         "liquidation_price": liquidation_price,
         "liquidation_time": liquidation_time,
+        "bad_debt": round(float(bad_debt), 2),
+        "bad_debt_pct": round(float(bad_debt) / capital * 100, 2) if capital else 0.0,
     }

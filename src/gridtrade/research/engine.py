@@ -173,6 +173,7 @@ class ReplayEngine:
             liquidated=self.port.liquidated,
             liquidation_price=(self._liquidation or {}).get("liquidation_price"),
             liquidation_time=(self._liquidation or {}).get("ts"),
+            bad_debt=(self._liquidation or {}).get("bad_debt", 0.0),
         )
         return BacktestResult(
             symbol=self.dataset.symbol,

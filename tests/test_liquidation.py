@@ -73,7 +73,7 @@ def test_gap_through_liquidation_uses_worse_open_and_floors_equity() -> None:
     assert event.reason == "gap_through_liquidation"
     assert event.fill_price == 80.0
     assert event.bad_debt > 0
-    assert port.cash == 0.0
+    assert port.cash < 0.0
 
 
 def test_short_position_liquidates_on_up_gap() -> None:
@@ -94,7 +94,7 @@ def test_short_position_liquidates_on_up_gap() -> None:
     assert port.cash >= 0.0
 
 
-def test_metrics_cap_drawdown_at_100_percent() -> None:
+def test_metrics_reports_negative_equity_drawdown_as_bad_debt() -> None:
     index = pd.date_range("2026-01-01", periods=4, freq="D", tz="UTC")
     equity = pd.Series([100.0, 20.0, -10.0, 5.0], index=index)
     stats = compute_stats(
@@ -110,8 +110,10 @@ def test_metrics_cap_drawdown_at_100_percent() -> None:
         liquidated=True,
         liquidation_price=12.0,
         liquidation_time="2026-01-03T00:00:00+00:00",
+        bad_debt=10.0,
     )
-    assert stats["max_dd"] <= 100.0
+    assert stats["max_dd"] > 100.0  # negative cross-margin equity is bad debt
+    assert stats["bad_debt"] > 0.0
     assert stats["liquidated"] is True
     assert stats["liquidation_price"] == 12.0
 
@@ -141,7 +143,6 @@ def test_paper_engine_force_liquidates_shared_margin(tmp_path) -> None:
 
     assert engine.status == "halted"
     assert state.position == 0.0
-    assert engine.account.cash >= 0.0
     assert engine.liquidation is not None
     assert engine.liquidation["maintenance_margin"] > 0
     snap = engine.snapshot()

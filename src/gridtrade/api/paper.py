@@ -703,8 +703,8 @@ class PaperEngine:
             self.account.fees += fee
             fees += fee
         bad_debt = max(0.0, -self.account.cash)
-        if self.account.cash < 0:
-            self.account.cash = 0.0
+        # Keep negative cash/equity when a gap creates bad debt.  Normal
+        # liquidations leave a non-negative balance; do not hide the edge case.
         self._mark_equity()
         self.liquidation = {
             "ts": _iso(now),

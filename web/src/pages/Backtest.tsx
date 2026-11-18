@@ -103,7 +103,7 @@ function StatBlock({ artifact }: { artifact: ReplayArtifact }) {
     <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-4">
       <Stat label="总收益" value={fmtPct(summary.total_return)} tone={summary.total_return} />
       <Stat label="年化收益" value={fmtPct(summary.ann_return)} tone={summary.ann_return} />
-      <Stat label="最大回撤" value={fmtPct(-Math.abs(summary.max_dd))} tone={-1} />
+      <Stat label="最大回撤（账户权益）" value={fmtPct(-Math.abs(summary.max_dd))} tone={-1} />
       <Stat label="Sharpe" value={fmtMoney(summary.sharpe)} />
       <Stat label="期末权益" value={`$${fmtMoney(summary.final_equity, 0)}`} sub={`基准 $${fmtMoney(artifact.capital, 0)}`} />
       <Stat label="成交" value={fmtMoney(summary.trades, 0)} sub={`换手 ${fmtMoney(summary.turnover_x ?? 0)}x`} />
@@ -114,6 +114,14 @@ function StatBlock({ artifact }: { artifact: ReplayArtifact }) {
         tone={summary.funding <= 0 ? 1 : -1}
         sub="正数为支出"
       />
+      {Number(summary.bad_debt ?? 0) > 0 ? (
+        <Stat
+          label="穿仓坏账"
+          value={`$${fmtMoney(Number(summary.bad_debt), 2)}`}
+          sub={`占本金 ${fmtMoney(Number(summary.bad_debt_pct ?? 0), 2)}%`}
+          tone={-1}
+        />
+      ) : null}
       {summary.liquidation_price != null ? (
         <Stat
           label="强平价"

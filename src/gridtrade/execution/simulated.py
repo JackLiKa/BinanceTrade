@@ -294,6 +294,9 @@ class SimExecution:
         fee = notional * self.liquidation_fee
         pnl = self.position * (fill_price - entry)
         cash_after = wallet + pnl - fee
+        # Cross margin can leave negative equity only when the price gaps
+        # through the liquidation price / liquidation fails.  Do NOT silently
+        # floor this to zero: reporting bad debt is the honest accounting.
         bad_debt = max(0.0, -cash_after)
         event = LiquidationEvent(
             ts=ts,
@@ -316,7 +319,7 @@ class SimExecution:
         self._pending_market.clear()
         self.position = 0.0
         self.entry_price = 0.0
-        self.cash = max(0.0, cash_after)
+        self.cash = cash_after
         self.fees_paid += fee
         self._last_price = fill_price
         self._mark = fill_price
