@@ -185,7 +185,15 @@ class GridStrategy(Strategy):
         if equity <= 0 or anchor <= 0:
             return 0.0
         qty = equity * self.params.leverage / self.params.levels / anchor
-        return ctx.filters.align_qty(qty)
+        aligned = ctx.filters.align_qty(qty)
+        notional = aligned * anchor
+        if aligned <= 0 or notional + 1e-9 < ctx.filters.min_notional:
+            raise ValueError(
+                f"每格名义 ${notional:.4f} 低于交易所最小名义 ${ctx.filters.min_notional:g}"
+                f"（{self.params.levels} 层、{self.params.leverage:g}x）；"
+                "请提高本金/杠杆或降低层数"
+            )
+        return aligned
 
     def _half_size(self) -> float:
         return 0.5 * self.size

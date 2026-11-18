@@ -140,3 +140,13 @@ def test_liquidation_engine_stops_before_negative_equity():
     assert result.stats["max_dd"] <= 100.0
     assert result.stats["final_equity"] >= 0.0
     assert result.final_position == pytest.approx(0.0)
+
+
+def test_grid_rejects_per_level_notional_below_exchange_minimum():
+    rows = [(281.0, 281.0, 281.0, 281.0)] * 20
+    with pytest.raises(ValueError, match="最小名义"):
+        run(
+            rows,
+            params=GridParams(40.0, 20, 1.0),
+            config=BacktestConfig(capital=100.0, stop_dd=None),
+        )

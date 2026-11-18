@@ -109,10 +109,10 @@ function StatBlock({ artifact }: { artifact: ReplayArtifact }) {
       <Stat label="成交" value={fmtMoney(summary.trades, 0)} sub={`换手 ${fmtMoney(summary.turnover_x ?? 0)}x`} />
       <Stat label="手续费" value={`$${fmtMoney(summary.fees)}`} sub="挂单 + 吃单" />
       <Stat
-        label="资金费率"
+        label="资金费"
         value={`${summary.funding >= 0 ? '−' : '+'}$${fmtMoney(Math.abs(summary.funding))}`}
         tone={summary.funding <= 0 ? 1 : -1}
-        sub="正数为支出"
+        sub="正数=支出 / 负数=收入"
       />
       {Number(summary.bad_debt ?? 0) > 0 ? (
         <>
@@ -708,6 +708,30 @@ export function Backtest() {
           </div>
 
           <ParamsForm value={params} onChange={updateParams} compact={tab === 'sweep'} />
+
+          {(() => {
+            const minNotional = quality.data?.filters?.min_notional ?? 5
+            const unitNotional = (params.capital * params.leverage) / Math.max(1, params.levels)
+            if (unitNotional + 1e-9 >= minNotional) return null
+            return (
+              <div className="mt-3">
+                <ErrorNote>
+                  每格名义约 ${unitNotional.toFixed(2)}，低于交易所最小名义 ${minNotional.toFixed(2)}；
+                  回测会直接失败或 0 成交。请提高本金/杠杆，或降低层数。
+                </ErrorNote>
+              </div>
+            )
+          })()}
+
+          {params.leverage >= 5 || params.stop_dd === null ? (
+            <div className="mt-3">
+              <ErrorNote>
+                当前 {params.leverage}x 杠杆{params.stop_dd === null ? '、未设回撤止损' : ''}：
+                全仓网格在单边趋势中会快速打满库存并触发强平，回测出现 -100% 属于参数风险。
+                建议先用 0.5–2x 并设置回撤止损。
+              </ErrorNote>
+            </div>
+          ) : null}
 
           {tab === 'walkforward' ? (
             <div className="mt-4">
