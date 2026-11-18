@@ -43,7 +43,7 @@ React 卸载整棵树，页面变黑。和“一次拉的数据太多”关系�
 | 路由 | `src/gridtrade/api/app.py` | `/api/auth/providers`、`/api/auth/google/start`、`/api/auth/google/poll`；`/api/auth/logout` 撤销会话；`require_token` 同时接受静态令牌与 Google 会话 |
 | 管理端 | 同上 | `GET/POST /api/admin/google*`：Client ID/Secret、启停、允许邮箱增删 |
 | 前端 | `web/src/pages/Login.tsx`、`api.ts`、`store.tsx` | Google 登录按钮、code 展示、轮询、cookie 会话恢复；令牌登录保留为备用 |
-| 后台 UI | `web/public/admin/index.html` | “Google 登录”卡片：凭据、启停、允许账号列表 |
+| 后台 UI | `web/public/admin/index.html` | 菜单式布局（概览/实盘/模拟盘/Google/安全/审计）；“Google 登录”页：凭据、启停、允许账号列表 |
 | APK | `MainActivity.java` | 外链（Google 授权页）交给系统浏览器；`CookieManager.flush()` 持久化会话；APK v0.3.0 不再内嵌令牌 |
 
 ### 2.3 数据与配置

@@ -59,6 +59,21 @@
       .user-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
         padding: 6px 0; border-bottom: 1px solid var(--line); font-family: ui-monospace, monospace; }
       .user-row button { height: 26px; padding: 0 8px; font-size: 11px; color: var(--down); }
+      .admin-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 18px; align-items: start; }
+      .menu { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 4px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+      .menu button { width: 100%; height: 36px; padding: 0 12px; text-align: left; background: transparent;
+        border: 1px solid transparent; color: var(--muted); }
+      .menu button:hover { background: var(--elev); color: var(--ink); }
+      .menu button.active { background: rgba(252,213,53,.1); border-color: rgba(252,213,53,.3);
+        color: var(--accent); font-weight: 600; }
+      .section { display: none; }
+      .section.active { display: block; }
+      @media (max-width: 720px) {
+        .admin-layout { grid-template-columns: 1fr; }
+        .menu { position: static; flex-direction: row; overflow-x: auto; padding: 6px; }
+        .menu button { width: auto; white-space: nowrap; }
+      }
     </style>
   </head>
   <body>
@@ -87,13 +102,24 @@
         <div id="passwordBanner" class="banner warn hidden">当前仍是默认密码 admin，请到「安全」修改。</div>
         <div id="globalMsg" class="banner hidden"></div>
 
-        <div class="card">
+        <div class="admin-layout">
+          <aside class="menu" id="adminMenu">
+            <button type="button" data-section="overview" class="active">概览</button>
+            <button type="button" data-section="live">实盘配置</button>
+            <button type="button" data-section="paper">模拟盘</button>
+            <button type="button" data-section="google">Google 登录</button>
+            <button type="button" data-section="security">安全</button>
+            <button type="button" data-section="audit">审计日志</button>
+          </aside>
+          <main class="sections" id="adminSections">
+
+        <div class="card section" data-section="overview">
           <h2>概览</h2>
           <p class="hint" id="envPath">—</p>
           <div class="grid" id="overviewStats"></div>
         </div>
 
-        <div class="card">
+        <div class="card section" data-section="live">
           <h2>实盘配置（Gate）</h2>
           <p class="hint">写入服务器 .env，只回显 Key 后四位；下单默认锁定。</p>
           <div class="row">
@@ -115,7 +141,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card section" data-section="paper">
           <h2>模拟盘配置</h2>
           <p class="hint">保存后会重置模拟盘账户（清空成交/权益并从当前标记价重新锚定）。</p>
           <label><span>标的（Gate 合约名，逗号分隔）</span><input id="paperSymbols" type="text" /></label>
@@ -134,7 +160,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card section" data-section="google">
           <h2>Google 登录</h2>
           <p class="hint">
             采用 Google OAuth Device Flow（当前面板为 HTTP，标准回调需要 HTTPS）。在 Google Cloud Console
@@ -156,7 +182,7 @@
           <div id="googleUsers"></div>
         </div>
 
-        <div class="card">
+        <div class="card section" data-section="security">
           <h2>安全</h2>
           <p class="hint">面板令牌用于浏览器/APK；轮换后需要重新登录面板并重打包 APK。</p>
           <div class="actions">
@@ -171,11 +197,14 @@
           <div class="actions"><button class="primary" id="passwordBtn">修改密码</button></div>
         </div>
 
-        <div class="card">
+        <div class="card section" data-section="audit">
           <h2>审计日志</h2>
-          <div style="max-height:320px;overflow:auto">
+          <div style="max-height:520px;overflow:auto">
             <table><thead><tr><th>时间</th><th>动作</th><th>详情</th></tr></thead><tbody id="auditRows"></tbody></table>
           </div>
+        </div>
+
+          </main>
         </div>
       </section>
     </div>
@@ -264,11 +293,26 @@
         }
       };
 
+      const SECTIONS = ['overview', 'live', 'paper', 'google', 'security', 'audit'];
+
+      const showSection = (name) => {
+        const target = SECTIONS.includes(name) ? name : 'overview';
+        document.querySelectorAll('#adminSections .section').forEach((section) => {
+          section.classList.toggle('active', section.dataset.section === target);
+        });
+        document.querySelectorAll('#adminMenu button').forEach((button) => {
+          button.classList.toggle('active', button.dataset.section === target);
+        });
+        const hash = '#/' + target;
+        if (location.hash !== hash) history.replaceState(null, '', hash);
+      };
+
       const boot = async () => {
         try {
           const me = await api('/api/admin/me');
           showApp();
           $('who').textContent = me.username;
+          showSection(location.hash.replace(/^#\/?/, ''));
           await loadOverview();
           await loadGoogle();
         } catch (_) { showLogin(); }
@@ -423,6 +467,15 @@
       $('paperResetBtn').onclick = () => paperAction('reset');
       $('rotateTokenBtn').onclick = rotateToken;
       $('passwordBtn').onclick = changePassword;
+
+      document.querySelectorAll('#adminMenu button').forEach((button) => {
+        button.onclick = () => showSection(button.dataset.section);
+      });
+      window.addEventListener('hashchange', () => {
+        if (!$('appView').classList.contains('hidden')) {
+          showSection(location.hash.replace(/^#\/?/, ''));
+        }
+      });
 
       boot();
       setInterval(() => { if (!$('appView').classList.contains('hidden')) loadOverview(); }, 15000);
