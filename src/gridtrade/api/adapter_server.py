@@ -413,12 +413,38 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(HTTPStatus.OK, {"ok": True, "income": rows})
                     return
                 if route == "/fills":
-                    limit = int((query.get("limit") or ["50"])[0])
-                    rows = [fill_view(row) for row in client.fills(symbol, limit=limit)]
-                    rows.sort(key=lambda row: row.get("time") or 0, reverse=True)
+                    limit = max(1, min(1000, int((query.get("limit") or ["100"])[0])))
+                    # Binance userTrades without a symbol only returns a partial
+                    # legacy slice on some accounts.  Discover the symbols from
+                    # recent orders, then query each symbol and merge by trade id.
+                    if symbol:
+                        rows = client.fills(symbol, limit=limit)
+                    else:
+                        try:
+                            recent_orders = client.all_orders(None, limit=200)
+                        except BinanceError:
+                            recent_orders = []
+                        symbols = sorted(
+                            {
+                                str(row.get("symbol"))
+                                for row in recent_orders
+                                if row.get("symbol")
+                            }
+                        )
+                        merged: dict[str, dict] = {}
+                        for sym in symbols:
+                            try:
+                                for row in client.fills(sym, limit=limit):
+                                    key = str(row.get("id") or f"{sym}:{row.get('orderId')}:{row.get('time')}")
+                                    merged[key] = row
+                            except BinanceError:
+                                continue
+                        rows = list(merged.values())
+                    views = [fill_view(row) for row in rows]
+                    views.sort(key=lambda row: row.get("time") or 0, reverse=True)
                     self._send(
                         HTTPStatus.OK,
-                        {"ok": True, "fills": rows, "actions": ACTION_LABELS},
+                        {"ok": True, "fills": views[:limit], "actions": ACTION_LABELS},
                     )
                     return
                 self._send(HTTPStatus.NOT_FOUND, {"ok": False, "msg": "unknown route"})
