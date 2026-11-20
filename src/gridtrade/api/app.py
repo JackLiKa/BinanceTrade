@@ -1397,6 +1397,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ("positions", lambda: client.positions(symbol)),
                 ("orders", lambda: client.open_orders(symbol)),
                 ("fills", lambda: client.fills(symbol, limit=20)),
+                ("income", lambda: client.income(symbol, limit=500)),
                 ("history", lambda: client.all_orders(symbol, limit=20)),
                 ("insurance", lambda: client.insurance_balance(symbol)),
                 ("adl_risk", lambda: client.adl_risk(symbol or "GOOGLUSDT")),

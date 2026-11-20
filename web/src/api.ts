@@ -464,6 +464,17 @@ export interface BinanceFillView {
   time?: number
 }
 
+export interface BinanceIncome {
+  symbol?: string
+  incomeType?: string
+  income?: string
+  asset?: string
+  time?: number
+  tranId?: number
+  tradeId?: string
+  info?: string
+}
+
 export interface BinanceAlert {
   ts: number
   level: 'info' | 'warn' | 'critical'
@@ -480,6 +491,7 @@ export interface BinanceState {
   orders?: { ok: boolean; orders: BinanceOrderView[] }
   fills?: { ok: boolean; fills: BinanceFillView[] }
   history?: { ok: boolean; orders: BinanceOrderView[] }
+  income?: { ok: boolean; income: BinanceIncome[] }
   alerts?: { ok: boolean; alerts: BinanceAlert[]; last_run_at?: number; last_error?: string | null }
   insurance?: { ok: boolean; assets: Array<{ asset: string; marginBalance: string; updateTime: number }>; symbols_count?: number }
   adl_risk?: { ok: boolean; data: { symbol: string; adlRisk: string; updateTime: number } | Array<{ symbol: string; adlRisk: string; updateTime: number }> }

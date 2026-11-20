@@ -406,6 +406,12 @@ class Handler(BaseHTTPRequestHandler):
                         {"ok": True, "orders": rows, "actions": ACTION_LABELS},
                     )
                     return
+                if route == "/income":
+                    limit = max(1, min(1000, int((query.get("limit") or ["500"])[0])))
+                    rows = client.income(symbol, limit=limit)
+                    rows.sort(key=lambda row: int(row.get("time") or 0), reverse=True)
+                    self._send(HTTPStatus.OK, {"ok": True, "income": rows})
+                    return
                 if route == "/fills":
                     limit = int((query.get("limit") or ["50"])[0])
                     rows = [fill_view(row) for row in client.fills(symbol, limit=limit)]

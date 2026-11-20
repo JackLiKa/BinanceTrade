@@ -115,6 +115,12 @@ class BinanceNodeClient:
         params = {"symbol": symbol.upper()} if symbol else None
         return self._get("/open_orders", params)
 
+    def income(self, symbol: str | None = None, limit: int = 500) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if symbol:
+            params["symbol"] = symbol.upper()
+        return self._get("/income", params)
+
     def fills(self, symbol: str | None = None, limit: int = 20) -> dict[str, Any]:
         params: dict[str, Any] = {"limit": limit}
         if symbol:

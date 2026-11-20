@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { api, type BinanceFillView, type BinanceOrderView, type BinancePositionView } from '../api'
+import { api, type BinanceFillView, type BinanceOrderView, type BinancePositionView, type BinanceIncome } from '../api'
 import { Badge, Button, Card, CardHead, ErrorNote, Skeleton, Stat } from '../components/ui'
 import { useFetch } from '../hooks'
+import { CumulativeChart } from '../components/charts'
 import { fmtMoney } from '../format'
 
 function num(value: string | number | null | undefined): number {
@@ -31,9 +32,30 @@ export function Binance({ mode = 'account' }: { mode?: 'account' | 'execution' }
   const health = data?.health
   const account = data?.account?.account
   const positions = (data?.positions?.positions ?? []) as BinancePositionView[]
-  const orders = (data?.orders?.orders ?? []) as BinanceOrderView[]
-  const fills = (data?.fills?.fills ?? []) as BinanceFillView[]
-  const history = (data?.history?.orders ?? []) as BinanceOrderView[]
+  const byNewest = <T extends { time?: number; updateTime?: number }>(rows: T[]): T[] =>
+    [...rows].sort((a, b) => Number(b.updateTime ?? b.time ?? 0) - Number(a.updateTime ?? a.time ?? 0))
+  const orders = byNewest((data?.orders?.orders ?? []) as BinanceOrderView[])
+  const fills = byNewest((data?.fills?.fills ?? []) as BinanceFillView[])
+  const history = byNewest((data?.history?.orders ?? []) as BinanceOrderView[])
+  const income = byNewest((data?.income?.income ?? []) as BinanceIncome[])
+  const incomeRows = income
+  const realized = incomeRows.filter((row) => row.incomeType === 'REALIZED_PNL').reduce((sum, row) => sum + num(row.income), 0)
+  const funding = incomeRows.filter((row) => row.incomeType === 'FUNDING_FEE').reduce((sum, row) => sum + num(row.income), 0)
+  const commission = incomeRows.filter((row) => row.incomeType === 'COMMISSION').reduce((sum, row) => sum + num(row.income), 0)
+  const netIncome = realized + funding + commission
+  const dailyIncome = (() => {
+    const byDay = new Map<string, number>()
+    for (const row of [...incomeRows].reverse()) {
+      if (!row.time) continue
+      const day = new Date(row.time).toLocaleDateString('zh-CN')
+      byDay.set(day, (byDay.get(day) ?? 0) + num(row.income))
+    }
+    let cumulative = 0
+    return Array.from(byDay.entries()).map(([day, value]) => {
+      cumulative += value
+      return { t: Math.floor(new Date(`${day} 00:00:00`).getTime() / 1000), v: cumulative }
+    })
+  })()
   const alerts = data?.alerts?.alerts ?? []
   const criticalAlerts = alerts.filter((row) => row.level === 'critical')
   const warnAlerts = alerts.filter((row) => row.level === 'warn')
@@ -180,6 +202,55 @@ export function Binance({ mode = 'account' }: { mode?: 'account' | 'execution' }
           </Card>
         </div>
       )}
+
+      <Card>
+        <CardHead
+          title="收益与资金费"
+          hint="来自 Binance /fapi/v1/income；已实现、资金费、手续费按官方现金流直接汇总"
+          right={<Badge tone={netIncome >= 0 ? 'up' : 'down'}>{netIncome >= 0 ? '+' : '−'}${fmtMoney(Math.abs(netIncome), 2)}</Badge>}
+        />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="已实现盈亏" value={`${realized >= 0 ? '+' : '−'}$${fmtMoney(Math.abs(realized), 2)}`} tone={realized >= 0 ? 1 : -1} />
+          <Stat label="资金费" value={`${funding >= 0 ? '+' : '−'}$${fmtMoney(Math.abs(funding), 2)}`} sub="正=收入 / 负=支出" tone={funding >= 0 ? 1 : -1} />
+          <Stat label="手续费" value={`$${fmtMoney(commission, 2)}`} sub="Binance commission" tone={-1} />
+          <Stat label="净收益" value={`${netIncome >= 0 ? '+' : '−'}$${fmtMoney(Math.abs(netIncome), 2)}`} tone={netIncome >= 0 ? 1 : -1} />
+        </div>
+        {dailyIncome.length > 1 ? (
+          <div className="mt-3">
+            <CumulativeChart points={dailyIncome} height={180} />
+          </div>
+        ) : (
+          <p className="mt-3 text-[11.5px] text-faint">暂无足够 income 数据绘制累计收益曲线。</p>
+        )}
+      </Card>
+
+      <Card pad={false}>
+        <div className="px-5 pt-5">
+          <CardHead title="资金流水 / 收益清单" hint="最新在前；类型、金额符号均直接来自 Binance income" right={<Badge tone="neutral">{incomeRows.length}</Badge>} />
+        </div>
+        {incomeRows.length === 0 ? (
+          <p className="px-5 py-6 text-center text-[12px] text-faint">暂无资金流水</p>
+        ) : (
+          <div className="overflow-x-auto border-t border-line-soft">
+            <table className="w-full min-w-[720px] text-left text-[11.5px]">
+              <thead className="text-[10px] uppercase tracking-wider text-faint">
+                <tr><th className="px-5 py-2">时间</th><th className="py-2">类型</th><th className="py-2">合约</th><th className="py-2 text-right">金额</th><th className="px-5 py-2 text-right">资产</th></tr>
+              </thead>
+              <tbody>
+                {incomeRows.map((row, index) => (
+                  <tr key={`${row.tranId ?? row.time}-${index}`} className="border-t border-line-soft/60">
+                    <td className="px-5 py-2 text-[11px] text-faint">{stamp(row.time)}</td>
+                    <td className="py-2 font-mono text-muted">{row.incomeType ?? '—'}</td>
+                    <td className="py-2 font-mono text-muted">{row.symbol ?? '—'}</td>
+                    <td className={`py-2 text-right font-mono ${num(row.income) >= 0 ? 'text-up' : 'text-down'}`}>{num(row.income) >= 0 ? '+' : '−'}{fmtMoney(Math.abs(num(row.income)), 6)}</td>
+                    <td className="px-5 py-2 text-right text-faint">{row.asset ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       <Card>
         <CardHead
